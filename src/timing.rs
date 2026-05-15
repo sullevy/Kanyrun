@@ -1,11 +1,15 @@
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-static ENABLED: OnceLock<bool> = OnceLock::new();
+static ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct Span {
+    inner: Option<SpanInner>,
+}
+
+struct SpanInner {
     start: Instant,
     last: Instant,
     label: &'static str,
@@ -13,22 +17,29 @@ pub(crate) struct Span {
 
 impl Span {
     pub(crate) fn new(label: &'static str) -> Self {
+        if !enabled() {
+            return Self { inner: None };
+        }
+
+        let now = Instant::now();
         Self {
-            start: Instant::now(),
-            last: Instant::now(),
-            label,
+            inner: Some(SpanInner {
+                start: now,
+                last: now,
+                label,
+            }),
         }
     }
 
     pub(crate) fn mark(&mut self, stage: &str, detail: impl AsRef<str>) {
-        if !enabled() {
+        let Some(inner) = self.inner.as_mut() else {
             return;
-        }
+        };
 
         let now = Instant::now();
-        let delta_us = now.duration_since(self.last).as_micros();
-        let total_us = now.duration_since(self.start).as_micros();
-        self.last = now;
+        let delta_us = now.duration_since(inner.last).as_micros();
+        let total_us = now.duration_since(inner.start).as_micros();
+        inner.last = now;
 
         let now_us = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -45,18 +56,18 @@ impl Span {
             let _ = writeln!(
                 file,
                 "now_us={now_us} req={request} label={} stage={stage} delta_us={delta_us} total_us={total_us} {detail}",
-                self.label
+                inner.label
             );
         }
     }
 }
 
+pub(crate) fn set_enabled(enabled: bool) {
+    ENABLED.store(enabled, Ordering::Relaxed);
+}
+
 fn enabled() -> bool {
-    *ENABLED.get_or_init(|| {
-        std::env::var("KANYRUN_TIMING")
-            .map(|value| value != "0")
-            .unwrap_or(false)
-    })
+    ENABLED.load(Ordering::Relaxed)
 }
 
 fn timing_value(value: &str) -> String {

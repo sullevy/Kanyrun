@@ -15,6 +15,7 @@ pub fn run() -> Result<(), String> {
             return Ok(());
         }
     };
+    crate::timing::set_enabled(request.debug);
 
     if request.daemon_server {
         return crate::daemon::serve(&request);

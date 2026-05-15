@@ -1,14 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-KANYRUN_OPEN_TIMING="${KANYRUN_OPEN_TIMING:-1}"
+KANYRUN_DEBUG=0
+KANYRUN_FILTERED_ARGS=()
+for arg in "$@"; do
+    if [ "$arg" = "--debug" ]; then
+        KANYRUN_DEBUG=1
+    else
+        KANYRUN_FILTERED_ARGS+=("$arg")
+    fi
+done
+set -- "${KANYRUN_FILTERED_ARGS[@]}"
+
+if [ "$KANYRUN_DEBUG" = "1" ]; then
+    KANYRUN_OPEN_TIMING=1
+else
+    KANYRUN_OPEN_TIMING=0
+fi
 KANYRUN_OPEN_TIMING_LOG="${KANYRUN_OPEN_TIMING_LOG:-/tmp/kanyrun-open-timing.log}"
 KANYRUN_OPEN_CONTEXT_LOG="${KANYRUN_OPEN_CONTEXT_LOG:-0}"
-TIMING_STARTED_RAW="${EPOCHREALTIME:-0.000000}"
-TIMING_STARTED_US="${TIMING_STARTED_RAW/./}"
-TIMING_LAST_US="$TIMING_STARTED_US"
-TIMING_REQUEST_ID="$$.$TIMING_STARTED_US"
 TIMING_SCRIPT_ARGC="$#"
+if [ "$KANYRUN_OPEN_TIMING" = "1" ]; then
+    TIMING_STARTED_RAW="${EPOCHREALTIME:-0.000000}"
+    TIMING_STARTED_US="${TIMING_STARTED_RAW/./}"
+    TIMING_LAST_US="$TIMING_STARTED_US"
+    TIMING_REQUEST_ID="$$.$TIMING_STARTED_US"
+else
+    TIMING_STARTED_US=0
+    TIMING_LAST_US=0
+    TIMING_REQUEST_ID="$$.0"
+fi
 
 INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/kanyrun"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,8 +39,10 @@ KANYRUN_DISMISS_EXISTING="${KANYRUN_DISMISS_EXISTING:-1}"
 KANYRUN_MENU_PID_FILE="${KANYRUN_MENU_PID_FILE:-${XDG_RUNTIME_DIR:-/tmp}/kanyrun/ui.pid}"
 KANYRUN_COPY_WAIT_ATTEMPTS="${KANYRUN_COPY_WAIT_ATTEMPTS:-${KANYRUN_GET_PATH_WAIT_ATTEMPTS:-2}}"
 KANYRUN_COPY_WAIT_DELAY_MS="${KANYRUN_COPY_WAIT_DELAY_MS:-${KANYRUN_GET_PATH_WAIT_DELAY_MS:-8}}"
-export KANYRUN_TIMING="${KANYRUN_TIMING:-$KANYRUN_OPEN_TIMING}"
-export KANYRUN_TIMING_REQUEST_ID="$TIMING_REQUEST_ID"
+if [ "$KANYRUN_DEBUG" = "1" ]; then
+    export KANYRUN_TIMING=1
+    export KANYRUN_TIMING_REQUEST_ID="$TIMING_REQUEST_ID"
+fi
 
 timing_now_us() {
     local raw="${EPOCHREALTIME:-0.000000}"
@@ -125,8 +148,14 @@ timing_mark resolve_programs
 dismiss_existing_menu
 
 run_menu() {
+    local debug_args
     timing_mark exec_menu "paths=$#"
+    debug_args=()
+    if [ "$KANYRUN_DEBUG" = "1" ]; then
+        debug_args=(--debug)
+    fi
     exec "$KANYRUN" \
+        "${debug_args[@]}" \
         --daemon-idle-timeout "$KANYRUN_DAEMON_IDLE_TIMEOUT" \
         --ui-idle-timeout "$KANYRUN_UI_IDLE_TIMEOUT" \
         --menu \
@@ -134,7 +163,12 @@ run_menu() {
 }
 
 run_context_menu() {
+    local debug_args
     timing_mark exec_context_menu
+    debug_args=()
+    if [ "$KANYRUN_DEBUG" = "1" ]; then
+        debug_args=(--debug)
+    fi
 
     unset KANYRUN_SELECTED_COUNT
     unset KANYRUN_SELECTED_PATHS
@@ -144,6 +178,7 @@ run_context_menu() {
     unset KANYRUN_SELECTED_STEMS
 
     exec "$KANYRUN" \
+        "${debug_args[@]}" \
         --daemon-idle-timeout "$KANYRUN_DAEMON_IDLE_TIMEOUT" \
         --ui-idle-timeout "$KANYRUN_UI_IDLE_TIMEOUT" \
         --menu \

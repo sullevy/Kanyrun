@@ -30,13 +30,14 @@ struct InvocationResponse {
 pub fn dispatch(mut request: CliRequest) -> Result<(), String> {
     request.daemon_server = false;
     request.oneshot = false;
+    let debug = request.debug;
 
     let payload = serde_json::to_vec(&Invocation { request })
         .map_err(|error| format!("failed to encode daemon request: {error}"))?;
 
     if let Err(error) = send_invocation(&socket_path_for_client(), &payload) {
         remove_unreachable_sockets();
-        spawn_daemon()?;
+        spawn_daemon(debug)?;
         send_invocation(&socket_path_for_client(), &payload).map_err(|retry_error| {
             format!("{error}; then failed to contact daemon: {retry_error}")
         })?;
@@ -123,41 +124,46 @@ fn remove_unreachable_sockets() {
     }
 }
 
-fn spawn_daemon() -> Result<(), String> {
+fn spawn_daemon(debug: bool) -> Result<(), String> {
     let mut timing = crate::timing::Span::new("client_spawn_daemon");
     let current_exe = std::env::current_exe().map_err(|error| {
         format!("failed to resolve current executable for daemon spawn: {error}")
     })?;
-    Command::new(&current_exe)
+    let mut command = Command::new(&current_exe);
+    command
         .arg("--daemon-server")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    if debug {
+        command.arg("--debug");
+    }
+    command
         .spawn()
         .map_err(|error| format!("failed to spawn daemon: {error}"))?;
     timing.mark("spawned", current_exe.display().to_string());
 
-    for _ in 0..30 {
+    for _ in 0..300 {
         if socket_candidates().iter().any(|path| path.exists()) {
             timing.mark("socket_ready", "");
             return Ok(());
         }
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(10));
     }
 
     Err("daemon did not become ready in time".into())
 }
 
 fn handle_connection(stream: &mut UnixStream, state: &mut DaemonState) -> Result<(), String> {
-    let mut timing = crate::timing::Span::new("daemon");
     let mut payload = Vec::new();
     stream
         .read_to_end(&mut payload)
         .map_err(|error| format!("failed to read daemon request: {error}"))?;
-    timing.mark("read_request", format!("bytes={}", payload.len()));
     let invocation: Invocation = serde_json::from_slice(&payload)
         .map_err(|error| format!("failed to decode daemon request: {error}"))?;
-    timing.mark("decode_request", "");
+    crate::timing::set_enabled(invocation.request.debug);
+    let mut timing = crate::timing::Span::new("daemon");
+    timing.mark("decode_request", format!("bytes={}", payload.len()));
 
     if let Some(timeout) = invocation.request.daemon_idle_timeout_secs {
         state.daemon_idle_timeout = Duration::from_secs(timeout);

@@ -13,6 +13,8 @@ pub struct CliRequest {
     pub from_primary: bool,
     pub oneshot: bool,
     pub daemon_server: bool,
+    #[serde(default)]
+    pub debug: bool,
     pub daemon_idle_timeout_secs: Option<u64>,
     pub ui_idle_timeout_secs: Option<u64>,
 }
@@ -76,6 +78,7 @@ where
             "--from-primary" => request.from_primary = true,
             "--oneshot" => request.oneshot = true,
             "--daemon-server" => request.daemon_server = true,
+            "--debug" => request.debug = true,
             "--daemon-idle-timeout" => {
                 let value = args
                     .next()
@@ -100,7 +103,7 @@ where
 fn help_text(program: &str) -> String {
     format!(
         "Usage: {program} [OPTIONS]\n\n
-actions:\n  no explicit input        Show the default root menu\n  --root-menu              Show the default root menu without reading selection or clipboard\n  --text VALUE             Use the provided text or URL as context\n  --files PATH...          Use one or more selected file or directory paths\n\noptions:\n  --menu                   Force a menu even when a direct action rule matches\n  --test                   Force the first configured menu to display\n  --menu-file PATH         Load menus from a specific menu.ini or menu.conf file\n  --from-clipboard         Use clipboard content as context\n  --from-primary           Use primary selection as context\n  --oneshot                Bypass the resident daemon and run once in the current process\n  --daemon-idle-timeout S  Exit the daemon after S seconds of inactivity\n  --ui-idle-timeout S      Reap the warm UI child after S seconds of inactivity\n  -h, --help               Show this help message\n\nexamples:\n  {program}\n  {program} --root-menu\n  {program} --test\n  {program} --menu-file ~/.config/kanyrun/menu-work.ini --test\n  {program} --text 'https://example.com'\n  {program} --text 'hello world' --menu\n  {program} --from-primary --menu\n  {program} --from-clipboard --menu\n  {program} --files /tmp/file.pdf\n  {program} --files /tmp/a.txt /tmp/b.txt\n  {program} --daemon-idle-timeout 300 --ui-idle-timeout 15\n"
+actions:\n  no explicit input        Show the default root menu\n  --root-menu              Show the default root menu without reading selection or clipboard\n  --text VALUE             Use the provided text or URL as context\n  --files PATH...          Use one or more selected file or directory paths\n\noptions:\n  --menu                   Force a menu even when a direct action rule matches\n  --test                   Force the first configured menu to display\n  --menu-file PATH         Load menus from a specific menu.ini or menu.conf file\n  --from-clipboard         Use clipboard content as context\n  --from-primary           Use primary selection as context\n  --oneshot                Bypass the resident daemon and run once in the current process\n  --daemon-idle-timeout S  Exit the daemon after S seconds of inactivity\n  --ui-idle-timeout S      Reap the warm UI child after S seconds of inactivity\n  --debug                  Enable timing logs for launch diagnostics\n  -h, --help               Show this help message\n\nexamples:\n  {program}\n  {program} --root-menu\n  {program} --test\n  {program} --menu-file ~/.config/kanyrun/menu-work.ini --test\n  {program} --text 'https://example.com'\n  {program} --text 'hello world' --menu\n  {program} --from-primary --menu\n  {program} --from-clipboard --menu\n  {program} --files /tmp/file.pdf\n  {program} --files /tmp/a.txt /tmp/b.txt\n  {program} --daemon-idle-timeout 300 --ui-idle-timeout 15\n"
     )
 }
 
@@ -132,6 +135,7 @@ mod tests {
                 from_primary: false,
                 oneshot: false,
                 daemon_server: false,
+                debug: false,
                 daemon_idle_timeout_secs: None,
                 ui_idle_timeout_secs: None,
             }) if value == "hello world" && files.is_empty()
@@ -204,6 +208,7 @@ mod tests {
                 assert!(help.contains("--test"));
                 assert!(help.contains("--root-menu"));
                 assert!(help.contains("--menu-file PATH"));
+                assert!(help.contains("--debug"));
             }
             ParseOutcome::Request(_) => panic!("expected help"),
         }
@@ -226,9 +231,24 @@ mod tests {
                 from_primary: false,
                 oneshot: false,
                 daemon_server: false,
+                debug: false,
                 daemon_idle_timeout_secs: None,
                 ui_idle_timeout_secs: None,
             }) if files.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parses_debug_flag() {
+        let outcome = parse_from(["kanyrun", "--debug", "--menu"]).unwrap();
+
+        assert!(matches!(
+            outcome,
+            ParseOutcome::Request(CliRequest {
+                debug: true,
+                force_menu: true,
+                ..
+            })
         ));
     }
 
