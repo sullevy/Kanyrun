@@ -15,7 +15,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 const DEFAULT_DAEMON_IDLE_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_UI_IDLE_TIMEOUT_SECS: u64 = 15;
-const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Invocation {
@@ -37,8 +37,9 @@ pub fn dispatch(mut request: CliRequest) -> Result<(), String> {
     if let Err(error) = send_invocation(&socket_path_for_client(), &payload) {
         remove_unreachable_sockets();
         spawn_daemon()?;
-        send_invocation(&socket_path_for_client(), &payload)
-            .map_err(|retry_error| format!("{error}; then failed to contact daemon: {retry_error}"))?;
+        send_invocation(&socket_path_for_client(), &payload).map_err(|retry_error| {
+            format!("{error}; then failed to contact daemon: {retry_error}")
+        })?;
     }
 
     Ok(())
@@ -84,19 +85,27 @@ pub fn serve(request: &CliRequest) -> Result<(), String> {
 }
 
 fn send_invocation(socket_path: &Path, payload: &[u8]) -> Result<(), String> {
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|error| format!("failed to connect to daemon socket {}: {error}", socket_path.display()))?;
+    let mut timing = crate::timing::Span::new("client");
+    let mut stream = UnixStream::connect(socket_path).map_err(|error| {
+        format!(
+            "failed to connect to daemon socket {}: {error}",
+            socket_path.display()
+        )
+    })?;
+    timing.mark("connect_daemon", socket_path.display().to_string());
     stream
         .write_all(payload)
         .map_err(|error| format!("failed to send daemon request: {error}"))?;
     stream
         .shutdown(Shutdown::Write)
         .map_err(|error| format!("failed to finalize daemon request: {error}"))?;
+    timing.mark("send_request", format!("bytes={}", payload.len()));
 
     let mut response = String::new();
     stream
         .read_to_string(&mut response)
         .map_err(|error| format!("failed to read daemon response: {error}"))?;
+    timing.mark("read_response", format!("bytes={}", response.len()));
     let response: InvocationResponse = serde_json::from_str(&response)
         .map_err(|error| format!("failed to decode daemon response: {error}"))?;
 
@@ -105,7 +114,6 @@ fn send_invocation(socket_path: &Path, payload: &[u8]) -> Result<(), String> {
         None => Ok(()),
     }
 }
-
 
 fn remove_unreachable_sockets() {
     for socket_path in socket_candidates() {
@@ -116,18 +124,22 @@ fn remove_unreachable_sockets() {
 }
 
 fn spawn_daemon() -> Result<(), String> {
-    let current_exe = std::env::current_exe()
-        .map_err(|error| format!("failed to resolve current executable for daemon spawn: {error}"))?;
-    Command::new(current_exe)
+    let mut timing = crate::timing::Span::new("client_spawn_daemon");
+    let current_exe = std::env::current_exe().map_err(|error| {
+        format!("failed to resolve current executable for daemon spawn: {error}")
+    })?;
+    Command::new(&current_exe)
         .arg("--daemon-server")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|error| format!("failed to spawn daemon: {error}"))?;
+    timing.mark("spawned", current_exe.display().to_string());
 
     for _ in 0..30 {
         if socket_candidates().iter().any(|path| path.exists()) {
+            timing.mark("socket_ready", "");
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
@@ -137,12 +149,15 @@ fn spawn_daemon() -> Result<(), String> {
 }
 
 fn handle_connection(stream: &mut UnixStream, state: &mut DaemonState) -> Result<(), String> {
+    let mut timing = crate::timing::Span::new("daemon");
     let mut payload = Vec::new();
     stream
         .read_to_end(&mut payload)
         .map_err(|error| format!("failed to read daemon request: {error}"))?;
+    timing.mark("read_request", format!("bytes={}", payload.len()));
     let invocation: Invocation = serde_json::from_slice(&payload)
         .map_err(|error| format!("failed to decode daemon request: {error}"))?;
+    timing.mark("decode_request", "");
 
     if let Some(timeout) = invocation.request.daemon_idle_timeout_secs {
         state.daemon_idle_timeout = Duration::from_secs(timeout);
@@ -151,9 +166,18 @@ fn handle_connection(stream: &mut UnixStream, state: &mut DaemonState) -> Result
         state.presenter_idle_timeout = Duration::from_secs(timeout);
         state.presenter.shutdown();
         state.presenter = state.build_presenter()?;
+        timing.mark("reset_presenter", format!("timeout={timeout}"));
     }
 
     let result = state.handle_request(&invocation.request);
+    timing.mark(
+        "handle_request",
+        if result.is_ok() {
+            "status=ok"
+        } else {
+            "status=err"
+        },
+    );
     let response = InvocationResponse {
         error: result.err(),
     };
@@ -161,7 +185,9 @@ fn handle_connection(stream: &mut UnixStream, state: &mut DaemonState) -> Result
         .map_err(|error| format!("failed to encode daemon response: {error}"))?;
     stream
         .write_all(&body)
-        .map_err(|error| format!("failed to write daemon response: {error}"))
+        .map_err(|error| format!("failed to write daemon response: {error}"))?;
+    timing.mark("write_response", format!("bytes={}", body.len()));
+    Ok(())
 }
 
 fn bind_listener() -> Result<(UnixListener, PathBuf), String> {
@@ -198,7 +224,12 @@ fn socket_path_for_client() -> PathBuf {
     socket_candidates()
         .into_iter()
         .find(|path| path.exists())
-        .unwrap_or_else(|| socket_candidates().into_iter().next().expect("at least one socket candidate"))
+        .unwrap_or_else(|| {
+            socket_candidates()
+                .into_iter()
+                .next()
+                .expect("at least one socket candidate")
+        })
 }
 
 fn socket_candidates() -> Vec<PathBuf> {
@@ -250,7 +281,10 @@ struct CachedConfig {
 }
 
 impl DaemonState {
-    fn new(daemon_idle_timeout_secs: u64, presenter_idle_timeout_secs: u64) -> Result<Self, String> {
+    fn new(
+        daemon_idle_timeout_secs: u64,
+        presenter_idle_timeout_secs: u64,
+    ) -> Result<Self, String> {
         let config_paths = config_paths();
         let presenter_idle_timeout = Duration::from_secs(presenter_idle_timeout_secs);
         let loaded = load(&config_paths, None)?;
@@ -276,10 +310,21 @@ impl DaemonState {
     }
 
     fn handle_request(&mut self, request: &CliRequest) -> Result<(), String> {
+        let mut timing = crate::timing::Span::new("daemon_request");
         let config = self.load_config_for_request(request)?;
+        timing.mark("load_config", "");
         let reader = WlPasteSelectionReader;
         let mut runner = SystemCommandRunner;
-        run_with(request, &config, &reader, &mut self.presenter, &mut runner)
+        let result = run_with(request, &config, &reader, &mut self.presenter, &mut runner);
+        timing.mark(
+            "run_with",
+            if result.is_ok() {
+                "status=ok"
+            } else {
+                "status=err"
+            },
+        );
+        result
     }
 
     fn load_config_for_request(&mut self, request: &CliRequest) -> Result<LoadedConfig, String> {

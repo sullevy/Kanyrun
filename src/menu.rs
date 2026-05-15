@@ -35,7 +35,11 @@ pub enum ActionCommand {
     Separator,
 }
 
-pub fn build_model(config: &LoadedConfig, menu_id: &str, context: &Context) -> Result<MenuModel, String> {
+pub fn build_model(
+    config: &LoadedConfig,
+    menu_id: &str,
+    context: &Context,
+) -> Result<MenuModel, String> {
     let menu = config
         .menu
         .menus
@@ -54,7 +58,12 @@ pub fn build_model(config: &LoadedConfig, menu_id: &str, context: &Context) -> R
     Ok(MenuModel {
         id: menu.id.clone(),
         title: menu.title.clone(),
-        actions: build_actions(config, &menu.actions, context, is_default_menu_id(config, menu_id))?,
+        actions: build_actions(
+            config,
+            &menu.actions,
+            context,
+            is_default_menu_id(config, menu_id),
+        )?,
     })
 }
 
@@ -155,7 +164,11 @@ fn should_hide_submenu(
     context: &Context,
     hide_context_default_submenus: bool,
 ) -> bool {
-    (hide_context_default_submenus && menu.context_default) || !menu_matches_context(menu, context)
+    if hide_context_default_submenus {
+        menu.context_default
+    } else {
+        !menu_matches_context(menu, context)
+    }
 }
 
 fn is_default_menu_id(config: &LoadedConfig, menu_id: &str) -> bool {
@@ -176,7 +189,11 @@ fn menu_matches_context(menu: &crate::config::MenuDefinition, context: &Context)
     context.files.iter().any(|path| {
         path.extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| menu.extensions.iter().any(|candidate| candidate.eq_ignore_ascii_case(ext)))
+            .map(|ext| {
+                menu.extensions
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(ext))
+            })
             .unwrap_or(false)
     })
 }
@@ -261,7 +278,10 @@ fn text_preview(context: &Context) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ActionCommand, build_model, default_action_id};
-    use crate::config::{AppConfig, LoadedConfig, MenuActionCommandConfig, MenuActionConfig, MenuConfig, MenuDefinition, MenusConfig, ResolvedConfigPaths};
+    use crate::config::{
+        AppConfig, LoadedConfig, MenuActionCommandConfig, MenuActionConfig, MenuConfig,
+        MenuDefinition, MenusConfig, ResolvedConfigPaths,
+    };
     use crate::context::{Context, ContextKind, ContextSource};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -289,7 +309,11 @@ mod tests {
     #[test]
     fn validates_search_provider_references() {
         let mut config = sample_loaded_config();
-        config.menu.menus[0].actions[0].command.as_mut().unwrap().provider = Some("missing".into());
+        config.menu.menus[0].actions[0]
+            .command
+            .as_mut()
+            .unwrap()
+            .provider = Some("missing".into());
         let context = text_context();
 
         let error = build_model(&config, "text", &context).unwrap_err();
@@ -431,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn hides_extension_gated_submenu_when_context_does_not_match() {
+    fn keeps_non_context_default_submenu_in_default_menu_even_when_extension_does_not_match() {
         let mut config = sample_loaded_config();
         config.menu.menus = vec![
             MenuDefinition {
@@ -479,7 +503,8 @@ mod tests {
 
         let menu = build_model(&config, "root", &context).unwrap();
 
-        assert!(menu.actions.is_empty());
+        assert_eq!(menu.actions.len(), 1);
+        assert_eq!(menu.actions[0].id, "python-tools");
     }
 
     #[test]
@@ -571,9 +596,10 @@ mod tests {
 
         let menu = build_model(&config, "root", &context).unwrap();
 
-        assert_eq!(menu.actions.len(), 2);
+        assert_eq!(menu.actions.len(), 3);
         assert_eq!(menu.actions[0].id, "google");
         assert_eq!(menu.actions[1].id, "common");
+        assert_eq!(menu.actions[2].id, "image");
     }
 
     #[test]

@@ -9,15 +9,26 @@ pub enum Resolution {
     None,
 }
 
-pub fn resolve(config: &LoadedConfig, context: &Context, force_menu: bool) -> Result<Resolution, String> {
+pub fn resolve(
+    config: &LoadedConfig,
+    context: &Context,
+    force_menu: bool,
+) -> Result<Resolution, String> {
     if context.files.len() > 1
         && let Some(menu_id) = menu_id(config, "file-list")
     {
         return resolve_menu(config, context, menu_id);
     }
 
+    if matches!(context.kind, ContextKind::File | ContextKind::Path)
+        && let Some(menu_id) = extension_context_default_menu_id(config, context)
+    {
+        return resolve_menu(config, context, menu_id);
+    }
+
     if force_menu
-        && let Some(menu_id) = context_default_menu_id(config, context).or_else(|| default_menu_id(config))
+        && let Some(menu_id) =
+            context_default_menu_id(config, context).or_else(|| default_menu_id(config))
     {
         return resolve_menu(config, context, menu_id);
     }
@@ -62,7 +73,11 @@ fn fallback_menu_id_for_direct<'a>(rule: &'a RuleConfig, force_menu: bool) -> Op
     }
 }
 
-fn resolve_menu(config: &LoadedConfig, context: &Context, menu_id: &str) -> Result<Resolution, String> {
+fn resolve_menu(
+    config: &LoadedConfig,
+    context: &Context,
+    menu_id: &str,
+) -> Result<Resolution, String> {
     let menu = crate::menu::build_model(config, menu_id, context)?;
     if !menu.actions.is_empty() {
         return Ok(Resolution::Menu(menu));
@@ -109,9 +124,10 @@ fn context_default_menu_id<'a>(config: &'a LoadedConfig, context: &Context) -> O
     match context.kind {
         ContextKind::FileList => menu_id(config, "file-list"),
         ContextKind::Directory => menu_id(config, "directory"),
-        ContextKind::Text | ContextKind::Url => menu_id(config, "selectedtext"),
-        ContextKind::File | ContextKind::Path => extension_context_default_menu_id(config, context)
-            .or_else(|| menu_id(config, "file")),
+        ContextKind::Text | ContextKind::Url => None,
+        ContextKind::File | ContextKind::Path => {
+            extension_context_default_menu_id(config, context).or_else(|| menu_id(config, "file"))
+        }
         ContextKind::Empty => None,
     }
 }
@@ -124,7 +140,11 @@ fn extension_context_default_menu_id<'a>(
         .menu
         .menus
         .iter()
-        .find(|menu| menu.context_default && !menu.extensions.is_empty() && menu_matches_extensions(menu, context))
+        .find(|menu| {
+            menu.context_default
+                && !menu.extensions.is_empty()
+                && menu_matches_extensions(menu, context)
+        })
         .map(|menu| menu.id.as_str())
 }
 
@@ -141,7 +161,11 @@ fn menu_matches_extensions(menu: &crate::config::MenuDefinition, context: &Conte
     context.files.iter().any(|path| {
         path.extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| menu.extensions.iter().any(|candidate| candidate.eq_ignore_ascii_case(ext)))
+            .map(|ext| {
+                menu.extensions
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(ext))
+            })
             .unwrap_or(false)
     })
 }
@@ -180,7 +204,10 @@ fn matches_mime_glob(rule: &RuleMatch, context: &Context) -> bool {
     match rule.mime_glob.as_deref() {
         Some(pattern) if pattern.ends_with("/*") => {
             let prefix = &pattern[..pattern.len() - 1];
-            context.mime_types.iter().any(|mime| mime.starts_with(prefix))
+            context
+                .mime_types
+                .iter()
+                .any(|mime| mime.starts_with(prefix))
         }
         Some(pattern) => context.mime_types.iter().any(|mime| mime == pattern),
         None => true,
@@ -192,7 +219,11 @@ fn matches_extensions(rule: &RuleMatch, context: &Context) -> bool {
         Some(extensions) => context.files.iter().any(|path| {
             path.extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| extensions.iter().any(|candidate| candidate.eq_ignore_ascii_case(ext)))
+                .map(|ext| {
+                    extensions
+                        .iter()
+                        .any(|candidate| candidate.eq_ignore_ascii_case(ext))
+                })
                 .unwrap_or(false)
         }),
         None => true,
@@ -243,7 +274,10 @@ fn source_name(source: ContextSource) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{Resolution, resolve};
-    use crate::config::{AppConfig, LoadedConfig, MenuConfig, MenuDefinition, ProviderConfig, ResolvedConfigPaths, RuleConfig, RuleMatch, config_paths_from, load};
+    use crate::config::{
+        AppConfig, LoadedConfig, MenuConfig, MenuDefinition, ProviderConfig, ResolvedConfigPaths,
+        RuleConfig, RuleMatch, config_paths_from, load,
+    };
     use crate::context::{Context, ContextKind, ContextSource};
     use crate::menu::ActionCommand;
     use std::collections::BTreeMap;
@@ -456,7 +490,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn bundled_config_resolves_common_contexts() {
         let temp = TempDir::new().unwrap();
@@ -476,11 +509,7 @@ mod tests {
         .unwrap();
 
         let loaded = load(
-            &config_paths_from(
-                Some(temp.path().join("xdg")),
-                None,
-                repo_root,
-            ),
+            &config_paths_from(Some(temp.path().join("xdg")), None, repo_root),
             None,
         )
         .unwrap();
@@ -512,7 +541,7 @@ mod tests {
                 files: Vec::new(),
                 mime_types: Vec::new(),
             },
-            "selectedtext",
+            "root",
         );
         assert_menu_id(
             &loaded,
@@ -602,14 +631,6 @@ mod tests {
             context_default: true,
             actions: vec![dummy_action("edit", "open-file")],
         });
-        config.menu.menus.push(MenuDefinition {
-            id: "selectedtext".into(),
-            title: "Selected text".into(),
-            extensions: Vec::new(),
-            context_default: true,
-            actions: vec![dummy_action("copy-text", "copy-text")],
-        });
-
         assert_forced_menu_id(
             &config,
             Context {
@@ -644,8 +665,40 @@ mod tests {
                 files: Vec::new(),
                 mime_types: Vec::new(),
             },
-            "selectedtext",
+            "root",
         );
+    }
+
+    #[test]
+    fn file_extension_context_default_takes_precedence_over_generic_file_rule() {
+        let mut config = sample_loaded_config();
+        config.menu.menus.push(MenuDefinition {
+            id: "office".into(),
+            title: "Office".into(),
+            extensions: vec!["doc".into(), "docx".into(), "xlsx".into()],
+            context_default: true,
+            actions: vec![dummy_action("wps", "open-file")],
+        });
+
+        assert_menu_id(
+            &config,
+            Context {
+                source: ContextSource::ExplicitFiles,
+                kind: ContextKind::File,
+                raw: "/tmp/report.docx".into(),
+                text: None,
+                files: vec![PathBuf::from("/tmp/report.docx")],
+                mime_types: vec!["application/octet-stream".into()],
+            },
+            "office",
+        );
+    }
+
+    #[test]
+    fn empty_context_uses_default_menu() {
+        let config = sample_loaded_config();
+
+        assert_menu_id(&config, Context::empty(ContextSource::Empty), "root");
     }
 
     fn assert_menu_id(config: &LoadedConfig, context: Context, expected_menu_id: &str) {
@@ -762,19 +815,6 @@ mod tests {
                         behavior: "direct".into(),
                         action: Some("open-url".into()),
                         menu: None,
-                    },
-                    RuleConfig {
-                        when: RuleMatch {
-                            kind: Some("text".into()),
-                            source: None,
-                            mime: None,
-                            mime_glob: None,
-                            extensions: None,
-                            is_multi: None,
-                        },
-                        behavior: "menu".into(),
-                        action: None,
-                        menu: Some("text".into()),
                     },
                     RuleConfig {
                         when: RuleMatch {

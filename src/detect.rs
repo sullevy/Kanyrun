@@ -1,6 +1,8 @@
 use crate::cli::CliRequest;
 use crate::context::{Context, ContextKind, ContextSource};
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub trait SelectionReader {
     fn read_clipboard(&self) -> Result<Option<String>, String>;
@@ -18,7 +20,10 @@ where
     }
 
     if !request.files.is_empty() {
-        return Ok(classify_paths(request.files.clone(), ContextSource::ExplicitFiles));
+        return Ok(classify_paths(
+            normalize_path_candidates(request.files.iter().map(|path| path.as_path())),
+            ContextSource::ExplicitFiles,
+        ));
     }
 
     for source in selection_order(request) {
@@ -46,11 +51,6 @@ fn selection_order(request: &CliRequest) -> Vec<ContextSource> {
     }
 
     if request.from_clipboard {
-        order.push(ContextSource::Clipboard);
-    }
-
-    if order.is_empty() {
-        order.push(ContextSource::PrimarySelection);
         order.push(ContextSource::Clipboard);
     }
 
@@ -85,21 +85,103 @@ fn classify_text(raw: &str, source: ContextSource) -> Option<Context> {
 }
 
 fn parse_existing_paths(raw: &str) -> Option<Vec<PathBuf>> {
+    let lines: Vec<&str> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+
     let paths: Vec<PathBuf> = raw
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(PathBuf::from)
+        .filter_map(|line| normalize_existing_path(line))
         .collect();
 
-    if paths.is_empty() {
+    if paths.len() != lines.len() {
         return None;
     }
 
-    if paths.iter().all(|path| path.exists()) {
-        Some(paths)
+    Some(deduplicate_paths(paths))
+}
+
+fn normalize_path_candidates<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Vec<PathBuf> {
+    deduplicate_paths(
+        paths
+            .into_iter()
+            .map(|path| normalize_path_lossy(path.to_string_lossy().as_ref()))
+            .collect(),
+    )
+}
+
+fn normalize_existing_path(raw: &str) -> Option<PathBuf> {
+    let path = normalize_path_lossy(raw);
+    if path.exists() {
+        Some(fs::canonicalize(&path).unwrap_or(path))
     } else {
         None
+    }
+}
+
+fn normalize_path_lossy(raw: &str) -> PathBuf {
+    let trimmed = raw
+        .trim_end_matches('\r')
+        .trim_matches('"')
+        .trim_matches('\'');
+    let decoded = if let Some(uri) = trimmed.strip_prefix("file://") {
+        let without_host = uri.strip_prefix("localhost").unwrap_or(uri);
+        decode_percent(without_host)
+    } else {
+        trimmed.to_string()
+    };
+    let path = PathBuf::from(decoded);
+    if path.exists() {
+        fs::canonicalize(&path).unwrap_or(path)
+    } else {
+        path
+    }
+}
+
+fn deduplicate_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut unique = Vec::new();
+    for path in paths {
+        if seen.insert(path.clone()) {
+            unique.push(path);
+        }
+    }
+    unique
+}
+
+fn decode_percent(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            {
+                output.push(high * 16 + low);
+                index += 3;
+                continue;
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -181,7 +263,14 @@ mod tests {
             ..CliRequest::default()
         };
 
-        let context = resolve_context(&request, &FakeSelectionReader { clipboard: None, primary: None }).unwrap();
+        let context = resolve_context(
+            &request,
+            &FakeSelectionReader {
+                clipboard: None,
+                primary: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(context.source, ContextSource::ExplicitText);
         assert_eq!(context.kind, ContextKind::Url);
@@ -196,7 +285,14 @@ mod tests {
             ..CliRequest::default()
         };
 
-        let context = resolve_context(&request, &FakeSelectionReader { clipboard: None, primary: None }).unwrap();
+        let context = resolve_context(
+            &request,
+            &FakeSelectionReader {
+                clipboard: None,
+                primary: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(context.source, ContextSource::ExplicitFiles);
         assert_eq!(context.kind, ContextKind::Directory);
@@ -204,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_newline_separated_existing_paths_as_file_list() {
+    fn classifies_newline_separated_clipboard_paths_as_file_list_when_requested() {
         let temp = TempDir::new().unwrap();
         let first = temp.path().join("one.txt");
         let second = temp.path().join("two.pdf");
@@ -216,16 +312,24 @@ mod tests {
             primary: None,
         };
 
-        let context = resolve_context(&CliRequest::default(), &reader).unwrap();
+        let request = CliRequest {
+            from_clipboard: true,
+            ..CliRequest::default()
+        };
+
+        let context = resolve_context(&request, &reader).unwrap();
 
         assert_eq!(context.source, ContextSource::Clipboard);
         assert_eq!(context.kind, ContextKind::FileList);
         assert_eq!(context.files, vec![first, second]);
-        assert_eq!(context.mime_types, vec!["text/plain".to_string(), "application/pdf".to_string()]);
+        assert_eq!(
+            context.mime_types,
+            vec!["text/plain".to_string(), "application/pdf".to_string()]
+        );
     }
 
     #[test]
-    fn prefers_primary_selection_by_default() {
+    fn defaults_to_empty_even_if_primary_has_text() {
         let reader = FakeSelectionReader {
             clipboard: Some("clipboard text".into()),
             primary: Some("search text".into()),
@@ -233,13 +337,13 @@ mod tests {
 
         let context = resolve_context(&CliRequest::default(), &reader).unwrap();
 
-        assert_eq!(context.source, ContextSource::PrimarySelection);
-        assert_eq!(context.kind, ContextKind::Text);
-        assert_eq!(context.text.as_deref(), Some("search text"));
+        assert_eq!(context.source, ContextSource::Empty);
+        assert_eq!(context.kind, ContextKind::Empty);
+        assert!(context.text.is_none());
     }
 
     #[test]
-    fn falls_back_to_clipboard_when_primary_is_empty() {
+    fn defaults_to_empty_when_primary_is_empty_even_if_clipboard_has_text() {
         let reader = FakeSelectionReader {
             clipboard: Some("clipboard text".into()),
             primary: Some("   \n".into()),
@@ -247,9 +351,9 @@ mod tests {
 
         let context = resolve_context(&CliRequest::default(), &reader).unwrap();
 
-        assert_eq!(context.source, ContextSource::Clipboard);
-        assert_eq!(context.kind, ContextKind::Text);
-        assert_eq!(context.text.as_deref(), Some("clipboard text"));
+        assert_eq!(context.source, ContextSource::Empty);
+        assert_eq!(context.kind, ContextKind::Empty);
+        assert_eq!(context.text.as_deref(), None);
     }
 
     #[test]
@@ -263,10 +367,68 @@ mod tests {
             ..CliRequest::default()
         };
 
-        let context = resolve_context(&request, &FakeSelectionReader { clipboard: None, primary: None }).unwrap();
+        let context = resolve_context(
+            &request,
+            &FakeSelectionReader {
+                clipboard: None,
+                primary: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(context.kind, ContextKind::File);
         assert_eq!(context.mime_types, vec!["application/pdf".to_string()]);
+    }
+
+    #[test]
+    fn normalizes_file_uri_from_explicit_files() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("report file.pdf");
+        fs::write(&file, "%PDF-1.4").unwrap();
+        let uri = format!("file://{}", file.display().to_string().replace(' ', "%20"));
+
+        let request = CliRequest {
+            files: vec![PathBuf::from(uri)],
+            ..CliRequest::default()
+        };
+
+        let context = resolve_context(
+            &request,
+            &FakeSelectionReader {
+                clipboard: None,
+                primary: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(context.kind, ContextKind::File);
+        assert_eq!(context.files, vec![fs::canonicalize(&file).unwrap()]);
+        assert_eq!(context.mime_types, vec!["application/pdf".to_string()]);
+    }
+
+    #[test]
+    fn normalizes_file_uri_from_clipboard_text() {
+        let temp = TempDir::new().unwrap();
+        let dir = temp.path().join("Project Folder");
+        fs::create_dir(&dir).unwrap();
+        let uri = format!(
+            "file://localhost{}",
+            dir.display().to_string().replace(' ', "%20")
+        );
+
+        let request = CliRequest {
+            from_clipboard: true,
+            ..CliRequest::default()
+        };
+        let reader = FakeSelectionReader {
+            clipboard: Some(uri),
+            primary: None,
+        };
+
+        let context = resolve_context(&request, &reader).unwrap();
+
+        assert_eq!(context.kind, ContextKind::Directory);
+        assert_eq!(context.files, vec![fs::canonicalize(&dir).unwrap()]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [[menus]]
-id = "selectedtext"
-title = "Selected text"
+id = "root"
+title = "Root"
 
 [[menus.actions]]
 id = "search"

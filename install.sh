@@ -13,7 +13,7 @@ BIN_DIR="${HOME}/.local/bin"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/kanyrun"
 SAMPLES_DIR="$INSTALL_ROOT/samples"
 
-if [ ! -x "$SOURCE_DIR/kanyrun" ] || [ ! -x "$SOURCE_DIR/kanyrun-ui" ] || [ ! -x "$SOURCE_DIR/get-path" ]; then
+if [ ! -x "$SOURCE_DIR/kanyrun" ] || [ ! -x "$SOURCE_DIR/kanyrun-ui" ]; then
     printf 'release bundle is missing binaries; run scripts/build-release.sh first\n' >&2
     exit 1
 fi
@@ -21,8 +21,8 @@ fi
 mkdir -p "$INSTALL_ROOT" "$BUNDLE_CONFIG_DIR" "$BIN_DIR" "$CONFIG_DIR" "$SAMPLES_DIR"
 install -m 0755 "$SOURCE_DIR/kanyrun" "$INSTALL_ROOT/kanyrun"
 install -m 0755 "$SOURCE_DIR/kanyrun-ui" "$INSTALL_ROOT/kanyrun-ui"
-install -m 0755 "$SOURCE_DIR/get-path" "$INSTALL_ROOT/get-path"
 install -m 0755 "$SOURCE_DIR/kanyrun-open.sh" "$INSTALL_ROOT/kanyrun-open.sh"
+rm -f "$INSTALL_ROOT/get-path" "$BIN_DIR/get-path"
 if [ -x "$SOURCE_DIR/get-file-path.sh" ]; then
     install -m 0755 "$SOURCE_DIR/get-file-path.sh" "$INSTALL_ROOT/get-file-path.sh"
 fi
@@ -33,7 +33,6 @@ install -m 0644 "$SOURCE_DIR/config/config.sample.toml" "$SAMPLES_DIR/config.sam
 install -m 0644 "$SOURCE_DIR/使用说明.md" "$INSTALL_ROOT/使用说明.md"
 
 ln -sfn "$INSTALL_ROOT/kanyrun" "$BIN_DIR/kanyrun"
-ln -sfn "$INSTALL_ROOT/get-path" "$BIN_DIR/get-path"
 
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     install -m 0644 "$SOURCE_DIR/config/config.toml" "$CONFIG_DIR/config.toml"

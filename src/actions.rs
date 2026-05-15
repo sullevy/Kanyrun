@@ -61,16 +61,21 @@ where
         ActionCommand::CopyPath => run_template(
             runner,
             configured_copy_command(config),
-            &[("{text}", context_path(context)?), ("{path}", context_path(context)?)],
+            &[
+                ("{text}", context_path(context)?),
+                ("{path}", context_path(context)?),
+            ],
         ),
         ActionCommand::QuickUrl { url } => run_command(
             runner,
             browser_program(config),
             vec![render_quickmenu_url(url, context)?],
         ),
-        ActionCommand::QuickPath { path } => {
-            run_command(runner, "xdg-open", vec![render_quickmenu_path(path, context)?])
-        }
+        ActionCommand::QuickPath { path } => run_command(
+            runner,
+            "xdg-open",
+            vec![render_quickmenu_path(path, context)?],
+        ),
         ActionCommand::OpenFile => {
             run_command(runner, "xdg-open", vec![context_path(context)?.to_string()])
         }
@@ -333,7 +338,10 @@ fn context_directory(context: &Context) -> Result<&str, String> {
 #[cfg(test)]
 mod tests {
     use super::{CommandRunner, execute, expand_home_path, render_shell_template};
-    use crate::config::{ActionsConfig, AppConfig, LoadedConfig, MenuConfig, MenusConfig, ProviderConfig, ResolvedConfigPaths};
+    use crate::config::{
+        ActionsConfig, AppConfig, LoadedConfig, MenuConfig, MenusConfig, ProviderConfig,
+        ResolvedConfigPaths,
+    };
     use crate::context::{Context, ContextKind, ContextSource};
     use crate::menu::ActionCommand;
     use std::collections::BTreeMap;
@@ -366,7 +374,10 @@ mod tests {
 
         execute(&config, &context, &ActionCommand::OpenUrl, &mut runner).unwrap();
 
-        assert_eq!(runner.invocations, vec![("browser-open".into(), vec!["https://example.com".into()])]);
+        assert_eq!(
+            runner.invocations,
+            vec![("browser-open".into(), vec!["https://example.com".into()])]
+        );
     }
 
     #[test]
@@ -416,7 +427,10 @@ mod tests {
 
         execute(&config, &context, &ActionCommand::CopyText, &mut runner).unwrap();
 
-        assert_eq!(runner.invocations, vec![("copy-tool".into(), vec!["hello world".into()])]);
+        assert_eq!(
+            runner.invocations,
+            vec![("copy-tool".into(), vec!["hello world".into()])]
+        );
     }
 
     #[test]
@@ -444,7 +458,10 @@ mod tests {
 
         assert_eq!(
             runner.invocations,
-            vec![("sh".into(), vec!["-c".into(), "code '/tmp/note.txt'".into()])]
+            vec![(
+                "sh".into(),
+                vec!["-c".into(), "code '/tmp/note.txt'".into()]
+            )]
         );
     }
 
@@ -473,7 +490,10 @@ mod tests {
 
         assert_eq!(
             runner.invocations,
-            vec![("browser-open".into(), vec!["https://example.com?q=hello%20world".into()])]
+            vec![(
+                "browser-open".into(),
+                vec!["https://example.com?q=hello%20world".into()]
+            )]
         );
     }
 
@@ -502,7 +522,10 @@ mod tests {
 
         assert_eq!(
             runner.invocations,
-            vec![("sh".into(), vec!["-c".into(), "wps '/tmp/note file.txt'".into()])]
+            vec![(
+                "sh".into(),
+                vec!["-c".into(), "wps '/tmp/note file.txt'".into()]
+            )]
         );
     }
 
@@ -531,7 +554,10 @@ mod tests {
 
         assert_eq!(
             runner.invocations,
-            vec![("sh".into(), vec!["-c".into(), "qimgv '/tmp/image file.png'".into()])]
+            vec![(
+                "sh".into(),
+                vec!["-c".into(), "qimgv '/tmp/image file.png'".into()]
+            )]
         );
     }
 
@@ -559,7 +585,10 @@ mod tests {
         .unwrap();
 
         let expected = expand_home_path("~/Apps").unwrap();
-        assert_eq!(runner.invocations, vec![("xdg-open".into(), vec![expected])]);
+        assert_eq!(
+            runner.invocations,
+            vec![("xdg-open".into(), vec![expected])]
+        );
     }
 
     #[test]

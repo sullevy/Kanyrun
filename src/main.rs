@@ -7,6 +7,7 @@ mod daemon;
 mod detect;
 mod menu;
 mod rules;
+mod timing;
 mod ui;
 
 fn main() {

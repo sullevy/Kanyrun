@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCursor>
+#include <QDateTime>
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusMessage>
@@ -20,6 +21,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPoint>
 #include <QProcess>
 #include <QScreen>
 #include <QTemporaryFile>
@@ -30,12 +32,22 @@
 #include <QWidget>
 #include <QWindow>
 #include <algorithm>
+#include <atomic>
+#include <csignal>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
+
+static std::atomic_bool gDismissRequested = false;
+
+static void handleDismissSignal(int)
+{
+    gDismissRequested.store(true, std::memory_order_relaxed);
+}
 
 static std::string readStdin()
 {
@@ -113,6 +125,8 @@ static std::vector<MenuActionModel> parseActions(const QJsonArray &rawActions)
 struct MenuPayloadModel {
     QString title;
     bool showIcons = true;
+    std::optional<QPoint> cursorPosition;
+    QString cursorSource;
     std::vector<MenuActionModel> actions;
 };
 
@@ -121,6 +135,16 @@ static MenuPayloadModel parseMenuPayload(const QJsonObject &object)
     MenuPayloadModel payload;
     payload.title = object.value("title").toString();
     payload.showIcons = object.contains("show_icons") ? object.value("show_icons").toBool() : true;
+    const auto cursorValue = object.value("cursor");
+    if (cursorValue.isObject()) {
+        const auto cursor = cursorValue.toObject();
+        const auto x = cursor.value("x");
+        const auto y = cursor.value("y");
+        if (x.isDouble() && y.isDouble()) {
+            payload.cursorPosition = QPoint(x.toInt(), y.toInt());
+            payload.cursorSource = cursor.value("source").toString(QStringLiteral("payload"));
+        }
+    }
     payload.actions = parseActions(object.value("actions").toArray());
     return payload;
 }
@@ -149,6 +173,61 @@ struct CursorAnchor {
     QScreen *screen = nullptr;
     QString source;
 };
+
+static QScreen *bestScreenForCursor(const QPoint &point);
+
+static QString cursorCachePath()
+{
+    return QDir::tempPath() + QStringLiteral("/kanyrun-ui-cursor-cache");
+}
+
+static void writeCursorCache(const QPoint &position, const QString &source)
+{
+    QFile file(cursorCachePath());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        return;
+    }
+
+    QTextStream stream(&file);
+    stream << QDateTime::currentMSecsSinceEpoch() << ' '
+           << position.x() << ' '
+           << position.y() << ' '
+           << source << Qt::endl;
+}
+
+static std::optional<CursorAnchor> readCursorCache(qint64 maxAgeMs)
+{
+    QFile file(cursorCachePath());
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return std::nullopt;
+    }
+
+    QTextStream stream(&file);
+    qint64 timestampMs = 0;
+    int x = 0;
+    int y = 0;
+    QString source;
+    stream >> timestampMs >> x >> y >> source;
+    if (stream.status() != QTextStream::Ok || timestampMs <= 0) {
+        return std::nullopt;
+    }
+    if (!source.contains(QStringLiteral("kwin")) && !source.startsWith(QStringLiteral("env"))) {
+        return std::nullopt;
+    }
+
+    const qint64 ageMs = QDateTime::currentMSecsSinceEpoch() - timestampMs;
+    if (ageMs < 0 || ageMs > maxAgeMs) {
+        return std::nullopt;
+    }
+
+    const QPoint position(x, y);
+    QScreen *screen = bestScreenForCursor(position);
+    if (screen == nullptr) {
+        return std::nullopt;
+    }
+
+    return CursorAnchor{position, screen, QStringLiteral("cache-%1").arg(source)};
+}
 
 static std::optional<QPoint> readCursorPositionFromKWin()
 {
@@ -326,6 +405,23 @@ static std::optional<CursorAnchor> resolveCursorAnchorFromEnvironment()
     return CursorAnchor{position, screen, source};
 }
 
+static std::optional<CursorAnchor> resolveCursorAnchorFromPayload(const MenuPayloadModel &payload)
+{
+    if (!payload.cursorPosition) {
+        return std::nullopt;
+    }
+
+    QScreen *screen = bestScreenForCursor(*payload.cursorPosition);
+    if (screen == nullptr) {
+        return std::nullopt;
+    }
+
+    const QString source = payload.cursorSource.isEmpty()
+        ? QStringLiteral("payload")
+        : QStringLiteral("payload-%1").arg(payload.cursorSource);
+    return CursorAnchor{*payload.cursorPosition, screen, source};
+}
+
 static std::optional<CursorAnchor> fallbackCursorAnchor()
 {
     QScreen *screen = QApplication::primaryScreen();
@@ -341,27 +437,58 @@ static std::optional<CursorAnchor> fallbackCursorAnchor()
     return CursorAnchor{available.center(), screen, QStringLiteral("fallback-primary-screen-center")};
 }
 
-static std::optional<CursorAnchor> resolveCursorAnchor()
+static std::optional<CursorAnchor> resolveCursorAnchor(const MenuPayloadModel &payload)
 {
+    static std::optional<QPoint> lastPosition;
+    static QString lastSource;
+
+    if (const auto payloadAnchor = resolveCursorAnchorFromPayload(payload)) {
+        lastPosition = payloadAnchor->position;
+        lastSource = payloadAnchor->source;
+        writeCursorCache(payloadAnchor->position, payloadAnchor->source);
+        return payloadAnchor;
+    }
+
+    if (const auto envAnchor = resolveCursorAnchorFromEnvironment()) {
+        lastPosition = envAnchor->position;
+        lastSource = envAnchor->source;
+        writeCursorCache(envAnchor->position, envAnchor->source);
+        return envAnchor;
+    }
+
     QString source;
     const std::optional<QPoint> position = readCursorPositionOnce(&source);
-    if (!position) {
-        return fallbackCursorAnchor();
+    if (position) {
+        QScreen *screen = bestScreenForCursor(*position);
+        if (screen != nullptr) {
+            lastPosition = *position;
+            lastSource = source;
+            writeCursorCache(*position, source);
+            return CursorAnchor{*position, screen, source};
+        }
     }
 
-    QScreen *screen = bestScreenForCursor(*position);
-    if (screen == nullptr) {
-        return fallbackCursorAnchor();
+    if (lastPosition) {
+        if (QScreen *screen = bestScreenForCursor(*lastPosition)) {
+            const QString sourceName = lastSource.isEmpty()
+                ? QStringLiteral("cached")
+                : QStringLiteral("cached-%1").arg(lastSource);
+            return CursorAnchor{*lastPosition, screen, sourceName};
+        }
     }
 
-    return CursorAnchor{*position, screen, source};
+    if (const auto cachedAnchor = readCursorCache(5000)) {
+        return cachedAnchor;
+    }
+
+    return fallbackCursorAnchor();
 }
 
 static int printCursorAnchor(bool allowFallback)
 {
     std::optional<CursorAnchor> anchor;
     if (allowFallback) {
-        anchor = resolveCursorAnchor();
+        anchor = resolveCursorAnchor(MenuPayloadModel{});
     } else {
         QString source;
         const std::optional<QPoint> position = readCursorPositionOnce(&source);
@@ -392,6 +519,52 @@ static void appendPlacementLog(const QString &line)
     }
     QTextStream stream(&file);
     stream << line << Qt::endl;
+}
+
+static void appendCursorLog(const QString &line)
+{
+    appendPlacementLog(QStringLiteral("cursor %1").arg(line));
+}
+
+static QString warmUiPidFilePath()
+{
+    QString base = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (base.isEmpty()) {
+        base = QDir::tempPath();
+    }
+
+    QDir dir(base + QStringLiteral("/kanyrun"));
+    if (!dir.exists()) {
+        dir.mkpath(QStringLiteral("."));
+    }
+    return dir.filePath(QStringLiteral("ui.pid"));
+}
+
+static void writeWarmUiPidFile()
+{
+    QFile file(warmUiPidFilePath());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        return;
+    }
+
+    QTextStream stream(&file);
+    stream << QCoreApplication::applicationPid() << Qt::endl;
+}
+
+static void removeWarmUiPidFile()
+{
+    QFile file(warmUiPidFilePath());
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+
+    QTextStream stream(&file);
+    qint64 pid = 0;
+    stream >> pid;
+    file.close();
+    if (pid == QCoreApplication::applicationPid()) {
+        QFile::remove(warmUiPidFilePath());
+    }
 }
 
 static QScreen *screenForPoint(const QPoint &point)
@@ -664,13 +837,89 @@ private:
     MenuItemWidget *m_highlightedItem = nullptr;
 };
 
+class DismissCaptureWindow final : public QWidget
+{
+public:
+    DismissCaptureWindow(QScreen *screen, std::function<void()> onDismiss)
+        : QWidget(nullptr)
+        , m_screen(screen)
+        , m_onDismiss(std::move(onDismiss))
+    {
+        setWindowFlag(Qt::FramelessWindowHint);
+        setWindowFlag(Qt::Tool);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_NoSystemBackground);
+        setFocusPolicy(Qt::NoFocus);
+    }
+
+    void open()
+    {
+        if (m_screen == nullptr) {
+            return;
+        }
+
+        setGeometry(m_screen->geometry());
+        winId();
+        configureLayerShell();
+        show();
+        raise();
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        QWidget::mousePressEvent(event);
+        if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton) {
+            return;
+        }
+        if (m_onDismiss) {
+            m_onDismiss();
+        }
+    }
+
+private:
+    void configureLayerShell()
+    {
+        if (auto *window = windowHandle()) {
+            window->setScreen(m_screen);
+
+            auto *layerShell = LayerShellQt::Window::get(window);
+            if (layerShell != nullptr) {
+                layerShell->setScope(QStringLiteral("kanyrun-menu-dismiss"));
+                layerShell->setLayer(LayerShellQt::Window::LayerOverlay);
+                layerShell->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
+                layerShell->setAnchors(LayerShellQt::Window::Anchors(
+                    LayerShellQt::Window::AnchorTop |
+                    LayerShellQt::Window::AnchorBottom |
+                    LayerShellQt::Window::AnchorLeft |
+                    LayerShellQt::Window::AnchorRight));
+                layerShell->setMargins(QMargins());
+                layerShell->setDesiredSize(QSize(0, 0));
+                layerShell->setExclusiveZone(0);
+                layerShell->setScreen(m_screen);
+                layerShell->setActivateOnShow(false);
+            }
+        }
+    }
+
+    QScreen *m_screen = nullptr;
+    std::function<void()> m_onDismiss;
+};
+
 class MenuOverlay final : public QWidget
 {
 public:
-    MenuOverlay(QString title, std::vector<MenuActionModel> actions, bool showIcons, QWidget *parent = nullptr)
+    MenuOverlay(QString title,
+                std::vector<MenuActionModel> actions,
+                bool showIcons,
+                std::optional<QPoint> cursorPosition,
+                QString cursorSource,
+                QWidget *parent = nullptr)
         : QWidget(parent)
         , m_title(std::move(title))
         , m_actions(std::move(actions))
+        , m_cursorPosition(cursorPosition)
+        , m_cursorSource(std::move(cursorSource))
         , m_showIcons(showIcons)
     {
         setWindowFlag(Qt::FramelessWindowHint);
@@ -688,9 +937,17 @@ public:
 
     std::function<void()> onFinished;
 
+    void dismiss()
+    {
+        finishOverlay();
+    }
+
     void open()
     {
-        const std::optional<CursorAnchor> anchor = resolveCursorAnchor();
+        MenuPayloadModel cursorPayload;
+        cursorPayload.cursorPosition = m_cursorPosition;
+        cursorPayload.cursorSource = m_cursorSource;
+        const std::optional<CursorAnchor> anchor = resolveCursorAnchor(cursorPayload);
         if (!anchor || anchor->screen == nullptr) {
             dismiss();
             return;
@@ -716,6 +973,7 @@ public:
         setGeometry(m_screenGeometry);
         winId();
         configureLayerShell();
+        openDismissCaptures();
 
         auto *rootPanel = new MenuPanel(&m_actions, m_showIcons, 0, this);
         rootPanel->onItemHovered = [this](MenuPanel *panel, MenuItemWidget *item) {
@@ -813,6 +1071,11 @@ protected:
     void closeEvent(QCloseEvent *event) override
     {
         QWidget::closeEvent(event);
+        if (m_finished) {
+            return;
+        }
+        m_finished = true;
+        closeDismissCaptures();
         if (onFinished) {
             onFinished();
         }
@@ -923,7 +1186,7 @@ protected:
             return;
         }
         m_selectedAction = item->action()->id;
-        close();
+        finishOverlay();
     }
 
     void closePanelsFromLevel(int level)
@@ -976,20 +1239,63 @@ protected:
         }
     }
 
-    void dismiss()
+    void openDismissCaptures()
     {
-        close();
+        const auto screens = QApplication::screens();
+        for (QScreen *screen : screens) {
+            if (screen == nullptr || screen == m_screen) {
+                continue;
+            }
+
+            auto *capture = new DismissCaptureWindow(screen, [this]() {
+                dismiss();
+            });
+            capture->open();
+            m_dismissCaptures.push_back(capture);
+        }
+    }
+
+    void closeDismissCaptures()
+    {
+        for (auto *capture : m_dismissCaptures) {
+            if (capture == nullptr) {
+                continue;
+            }
+            capture->hide();
+            capture->close();
+            capture->deleteLater();
+        }
+        m_dismissCaptures.clear();
+    }
+
+    void finishOverlay()
+    {
+        if (m_finished) {
+            return;
+        }
+        m_finished = true;
+        closeDismissCaptures();
+        if (isVisible()) {
+            close();
+        }
+        if (onFinished) {
+            onFinished();
+        }
     }
 
     QString m_title;
     std::vector<MenuActionModel> m_actions;
     QString m_selectedAction;
+    std::optional<QPoint> m_cursorPosition;
+    QString m_cursorSource;
     QScreen *m_screen = nullptr;
     QRect m_screenGeometry;
     QRect m_availableGeometry;
     QPoint m_cursorAnchor;
     bool m_showIcons = true;
+    bool m_finished = false;
     std::vector<MenuPanel *> m_panels;
+    std::vector<DismissCaptureWindow *> m_dismissCaptures;
 };
 
 static QString runOverlayForPayload(const MenuPayloadModel &payload)
@@ -998,12 +1304,27 @@ static QString runOverlayForPayload(const MenuPayloadModel &payload)
         return {};
     }
 
-    MenuOverlay overlay(payload.title, payload.actions, payload.showIcons);
+    gDismissRequested.store(false, std::memory_order_relaxed);
+    MenuOverlay overlay(payload.title,
+                        payload.actions,
+                        payload.showIcons,
+                        payload.cursorPosition,
+                        payload.cursorSource);
     QEventLoop loop;
     overlay.onFinished = [&loop]() {
         loop.quit();
     };
+    QTimer dismissTimer;
+    QObject::connect(&dismissTimer, &QTimer::timeout, [&overlay]() {
+        if (gDismissRequested.exchange(false, std::memory_order_relaxed)) {
+            overlay.dismiss();
+        }
+    });
+    dismissTimer.start(15);
     overlay.open();
+    if (!overlay.isVisible()) {
+        return overlay.selectedAction();
+    }
     loop.exec();
     return overlay.selectedAction();
 }
@@ -1028,6 +1349,7 @@ static int runOneShotUi()
 
 static int runWarmUiLoop()
 {
+    writeWarmUiPidFile();
     std::string frame;
     while (readFramedStdin(&frame)) {
         const auto raw = QByteArray::fromStdString(frame);
@@ -1035,6 +1357,7 @@ static int runWarmUiLoop()
         const auto document = QJsonDocument::fromJson(raw, &error);
         if (error.error != QJsonParseError::NoError || !document.isObject()) {
             QTextStream(stderr) << "failed to parse menu payload: " << error.errorString() << Qt::endl;
+            removeWarmUiPidFile();
             return 1;
         }
 
@@ -1045,6 +1368,7 @@ static int runWarmUiLoop()
         out.flush();
     }
 
+    removeWarmUiPidFile();
     return 0;
 }
 
@@ -1052,6 +1376,7 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
+    std::signal(SIGUSR1, handleDismissSignal);
 
     const QStringList arguments = QCoreApplication::arguments();
     if (arguments.contains(QStringLiteral("--print-cursor"))) {

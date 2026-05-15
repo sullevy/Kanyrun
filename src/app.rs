@@ -48,24 +48,33 @@ where
     S: SelectionReader,
     P: MenuPresenter,
 {
-    let context = if request.test_menu {
+    let mut timing = crate::timing::Span::new("app");
+    let context = if request.test_menu || request.root_menu {
         Context::empty(ContextSource::Empty)
     } else {
         resolve_context(request, reader)?
     };
-    let resolution = if request.test_menu {
-        crate::rules::Resolution::Menu(default_test_menu(config, &context)?)
+    timing.mark("resolve_context", format!("source={:?}", context.source));
+    let resolution = if request.test_menu || request.root_menu {
+        crate::rules::Resolution::Menu(default_menu(config, &context)?)
     } else {
         crate::rules::resolve(config, &context, request.force_menu)?
     };
+    timing.mark("resolve_rules", "");
 
     match resolution {
-        crate::rules::Resolution::Direct(command) => crate::actions::execute(config, &context, &command, runner),
+        crate::rules::Resolution::Direct(command) => {
+            timing.mark("execute_direct", "");
+            crate::actions::execute(config, &context, &command, runner)
+        }
         crate::rules::Resolution::Menu(menu) => {
+            timing.mark("menu_ready", format!("actions={}", menu.actions.len()));
             if request.test_menu {
                 presenter.show_menu(&menu)?;
+                timing.mark("show_menu", "mode=test");
                 Ok(())
             } else if let Some(action_id) = presenter.show_menu(&menu)? {
+                timing.mark("show_menu", format!("selected={action_id}"));
                 let action = find_action(&menu.actions, &action_id)?;
                 let command = action
                     .command
@@ -73,10 +82,14 @@ where
                     .ok_or_else(|| format!("menu action is not executable: {action_id}"))?;
                 crate::actions::execute(config, &context, command, runner)
             } else {
+                timing.mark("show_menu", "selected=none");
                 Ok(())
             }
         }
-        crate::rules::Resolution::None => Ok(()),
+        crate::rules::Resolution::None => {
+            timing.mark("resolution_none", "");
+            Ok(())
+        }
     }
 }
 
@@ -96,7 +109,10 @@ fn find_action<'a>(actions: &'a [MenuAction], action_id: &str) -> Result<&'a Men
     Err(format!("menu returned unknown action id: {action_id}"))
 }
 
-fn default_test_menu(config: &LoadedConfig, context: &Context) -> Result<crate::menu::MenuModel, String> {
+fn default_menu(
+    config: &LoadedConfig,
+    context: &Context,
+) -> Result<crate::menu::MenuModel, String> {
     let menu_id = config
         .app
         .menus
@@ -138,7 +154,11 @@ mod tests {
     use super::run_with;
     use crate::actions::CommandRunner;
     use crate::cli::CliRequest;
-    use crate::config::{AppConfig, GeneralConfig, LoadedConfig, MenuActionCommandConfig, MenuActionConfig, MenuConfig, MenuDefinition, MenusConfig, ProviderConfig, ResolvedConfigPaths, RuleConfig, RuleMatch};
+    use crate::config::{
+        AppConfig, GeneralConfig, LoadedConfig, MenuActionCommandConfig, MenuActionConfig,
+        MenuConfig, MenuDefinition, MenusConfig, ProviderConfig, ResolvedConfigPaths, RuleConfig,
+        RuleMatch,
+    };
     use crate::detect::SelectionReader;
     use crate::menu::MenuModel;
     use crate::ui::MenuPresenter;
@@ -173,7 +193,11 @@ mod tests {
 
     impl MenuPresenter for SelectingPresenter {
         fn show_menu(&mut self, menu: &MenuModel) -> Result<Option<String>, String> {
-            if let Some(submenu) = menu.actions.first().and_then(|action| action.submenu.as_ref()) {
+            if let Some(submenu) = menu
+                .actions
+                .first()
+                .and_then(|action| action.submenu.as_ref())
+            {
                 return Ok(submenu.first().map(|action| action.id.clone()));
             }
 
@@ -199,9 +223,19 @@ mod tests {
         let mut runner = RecordingRunner::default();
         let mut presenter = SelectingPresenter;
 
-        run_with(&request, &config, &FakeSelectionReader, &mut presenter, &mut runner).unwrap();
+        run_with(
+            &request,
+            &config,
+            &FakeSelectionReader,
+            &mut presenter,
+            &mut runner,
+        )
+        .unwrap();
 
-        assert_eq!(runner.invocations, vec![("browser-open".into(), vec!["https://example.com".into()])]);
+        assert_eq!(
+            runner.invocations,
+            vec![("browser-open".into(), vec!["https://example.com".into()])]
+        );
     }
 
     #[test]
@@ -214,7 +248,14 @@ mod tests {
         let mut runner = RecordingRunner::default();
         let mut presenter = SelectingPresenter;
 
-        run_with(&request, &config, &FakeSelectionReader, &mut presenter, &mut runner).unwrap();
+        run_with(
+            &request,
+            &config,
+            &FakeSelectionReader,
+            &mut presenter,
+            &mut runner,
+        )
+        .unwrap();
 
         assert_eq!(
             runner.invocations,
@@ -235,8 +276,35 @@ mod tests {
         let mut runner = RecordingRunner::default();
         let mut presenter = ClosingPresenter;
 
-        run_with(&request, &config, &FakeSelectionReader, &mut presenter, &mut runner).unwrap();
+        run_with(
+            &request,
+            &config,
+            &FakeSelectionReader,
+            &mut presenter,
+            &mut runner,
+        )
+        .unwrap();
 
+        assert!(runner.invocations.is_empty());
+    }
+
+    #[test]
+    fn root_menu_ignores_primary_selection() {
+        let config = root_sample_config();
+        let request = CliRequest {
+            root_menu: true,
+            ..CliRequest::default()
+        };
+        let reader = TextSelectionReader {
+            primary: Some("selected text".into()),
+            clipboard: Some("clipboard text".into()),
+        };
+        let mut runner = RecordingRunner::default();
+        let mut presenter = RecordingPresenter::default();
+
+        run_with(&request, &config, &reader, &mut presenter, &mut runner).unwrap();
+
+        assert_eq!(presenter.menu_ids, vec!["root"]);
         assert!(runner.invocations.is_empty());
     }
 
@@ -375,6 +443,65 @@ mod tests {
                 config_toml: PathBuf::from("config.toml"),
                 menu_file: PathBuf::from("menu.ini"),
             },
+        }
+    }
+
+    fn root_sample_config() -> LoadedConfig {
+        let mut config = sample_config();
+        config.app.menus = Some(MenusConfig {
+            default_file: None,
+            default_id: Some("root".into()),
+            fallback_id: Some("root".into()),
+        });
+        config.app.rules = Vec::new();
+        config.menu.menus.insert(
+            0,
+            MenuDefinition {
+                id: "root".into(),
+                title: "Root".into(),
+                extensions: Vec::new(),
+                context_default: false,
+                actions: vec![MenuActionConfig {
+                    id: "open-root".into(),
+                    label: "Root".into(),
+                    icon: None,
+                    default: None,
+                    submenu: None,
+                    command: Some(MenuActionCommandConfig {
+                        kind: "separator".into(),
+                        provider: None,
+                        desktop_id: None,
+                    }),
+                }],
+            },
+        );
+        config
+    }
+
+    struct TextSelectionReader {
+        primary: Option<String>,
+        clipboard: Option<String>,
+    }
+
+    impl SelectionReader for TextSelectionReader {
+        fn read_clipboard(&self) -> Result<Option<String>, String> {
+            Ok(self.clipboard.clone())
+        }
+
+        fn read_primary(&self) -> Result<Option<String>, String> {
+            Ok(self.primary.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingPresenter {
+        menu_ids: Vec<String>,
+    }
+
+    impl MenuPresenter for RecordingPresenter {
+        fn show_menu(&mut self, menu: &MenuModel) -> Result<Option<String>, String> {
+            self.menu_ids.push(menu.id.clone());
+            Ok(None)
         }
     }
 }

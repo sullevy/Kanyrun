@@ -47,7 +47,12 @@ impl MenuPresenter for DefaultPresenter {
     fn show_menu(&mut self, menu: &MenuModel) -> Result<Option<String>, String> {
         match self {
             Self::Kwin(presenter) => presenter.show_menu(menu),
-            Self::Qt(presenter) => show_menu_with(menu, presenter.show_icons, &SystemUiProcessRunner, &presenter.program),
+            Self::Qt(presenter) => show_qt_menu_with_cursor(
+                menu,
+                presenter.show_icons,
+                &SystemUiProcessRunner,
+                &presenter.program,
+            ),
         }
     }
 }
@@ -83,7 +88,8 @@ impl KwinPresenter {
             return Err(error);
         }
 
-        let wait = thread::spawn(move || wait_for_selection(listener, &req_id, Duration::from_secs(120)));
+        let wait =
+            thread::spawn(move || wait_for_selection(listener, &req_id, Duration::from_secs(120)));
         let result = wait.join().unwrap_or_else(|_| Ok(None));
         let _ = unload_kwin_script(plugin);
         let _ = fs::remove_file(&qml_path);
@@ -105,8 +111,13 @@ fn request_id() -> String {
     format!("p{}t{}", std::process::id(), nanos)
 }
 
-fn render_kwin_qml(menu: &MenuModel, show_icons: bool, port: u16, req_id: &str) -> Result<String, String> {
-    let payload = serialize_menu(menu, show_icons)?;
+fn render_kwin_qml(
+    menu: &MenuModel,
+    show_icons: bool,
+    port: u16,
+    req_id: &str,
+) -> Result<String, String> {
+    let payload = serialize_menu_with_cursor(menu, show_icons, None)?;
     Ok(KWIN_MENU_QML
         .replace("__MENU_JSON__", &qml_string_literal(&payload))
         .replace("__PORT__", &port.to_string())
@@ -115,9 +126,11 @@ fn render_kwin_qml(menu: &MenuModel, show_icons: bool, port: u16, req_id: &str) 
 
 fn write_kwin_qml(contents: &str, req_id: &str) -> Result<PathBuf, String> {
     let dir = std::env::temp_dir().join("kanyrun");
-    fs::create_dir_all(&dir).map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
     let path = dir.join(format!("menu-{req_id}.qml"));
-    fs::write(&path, contents).map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    fs::write(&path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
     Ok(path)
 }
 
@@ -126,7 +139,15 @@ fn qml_string_literal(value: &str) -> String {
 }
 
 fn unload_kwin_script(plugin: &str) -> Result<(), String> {
-    run_busctl(&["call", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting", "unloadScript", "s", plugin])
+    run_busctl(&[
+        "call",
+        "org.kde.KWin",
+        "/Scripting",
+        "org.kde.kwin.Scripting",
+        "unloadScript",
+        "s",
+        plugin,
+    ])
 }
 
 fn load_kwin_script(path: &Path, plugin: &str) -> Result<(), String> {
@@ -146,7 +167,13 @@ fn load_kwin_script(path: &Path, plugin: &str) -> Result<(), String> {
 }
 
 fn start_kwin_scripts() -> Result<(), String> {
-    run_busctl(&["call", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting", "start"])
+    run_busctl(&[
+        "call",
+        "org.kde.KWin",
+        "/Scripting",
+        "org.kde.kwin.Scripting",
+        "start",
+    ])
 }
 
 fn run_busctl(args: &[&str]) -> Result<(), String> {
@@ -167,7 +194,11 @@ fn run_busctl(args: &[&str]) -> Result<(), String> {
     }
 }
 
-fn wait_for_selection(listener: TcpListener, req_id: &str, timeout: Duration) -> Result<Option<String>, String> {
+fn wait_for_selection(
+    listener: TcpListener,
+    req_id: &str,
+    timeout: Duration,
+) -> Result<Option<String>, String> {
     listener
         .set_nonblocking(true)
         .map_err(|error| format!("failed to configure callback listener: {error}"))?;
@@ -186,6 +217,29 @@ fn wait_for_selection(listener: TcpListener, req_id: &str, timeout: Duration) ->
     }
 }
 
+fn wait_for_cursor(
+    listener: TcpListener,
+    req_id: &str,
+    timeout: Duration,
+) -> Result<Option<CursorPayload>, String> {
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("failed to configure cursor callback listener: {error}"))?;
+    let started = Instant::now();
+    loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => return read_cursor(&mut stream, req_id),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if started.elapsed() >= timeout {
+                    return Ok(None);
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(error) => return Err(format!("failed to accept cursor callback: {error}")),
+        }
+    }
+}
+
 fn read_selection(stream: &mut TcpStream, req_id: &str) -> Result<Option<String>, String> {
     let mut request = [0_u8; 2048];
     let len = stream
@@ -196,6 +250,18 @@ fn read_selection(stream: &mut TcpStream, req_id: &str) -> Result<Option<String>
     let id = parse_selection_request(first_line, req_id)?;
     let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\n\r\n");
     Ok(id.filter(|value| !value.is_empty()))
+}
+
+fn read_cursor(stream: &mut TcpStream, req_id: &str) -> Result<Option<CursorPayload>, String> {
+    let mut request = [0_u8; 2048];
+    let len = stream
+        .read(&mut request)
+        .map_err(|error| format!("failed to read cursor callback: {error}"))?;
+    let request = String::from_utf8_lossy(&request[..len]);
+    let first_line = request.lines().next().unwrap_or_default();
+    let cursor = parse_cursor_request(first_line, req_id)?;
+    let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\n\r\n");
+    Ok(cursor)
 }
 
 fn parse_selection_request(first_line: &str, req_id: &str) -> Result<Option<String>, String> {
@@ -225,12 +291,61 @@ fn parse_selection_request(first_line: &str, req_id: &str) -> Result<Option<Stri
     }
 }
 
+fn parse_cursor_request(first_line: &str, req_id: &str) -> Result<Option<CursorPayload>, String> {
+    let path = first_line
+        .strip_prefix("GET ")
+        .and_then(|line| line.split_whitespace().next())
+        .ok_or_else(|| "invalid cursor callback request".to_string())?;
+    let query = path
+        .split_once('?')
+        .map(|(_, query)| query)
+        .unwrap_or_default();
+    let mut seen_req = false;
+    let mut x = None;
+    let mut y = None;
+    let mut source = None;
+    for part in query.split('&') {
+        let (key, value) = part.split_once('=').unwrap_or((part, ""));
+        let value = percent_decode(value);
+        match key {
+            "req" if value == req_id => seen_req = true,
+            "x" => x = parse_cursor_component(&value),
+            "y" => y = parse_cursor_component(&value),
+            "source" => source = Some(value),
+            _ => {}
+        }
+    }
+    if !seen_req {
+        return Err("cursor callback request id mismatch".into());
+    }
+
+    Ok(match (x, y) {
+        (Some(x), Some(y)) => Some(CursorPayload {
+            x,
+            y,
+            source: source.unwrap_or_else(|| "kwin".into()),
+        }),
+        _ => None,
+    })
+}
+
+fn parse_cursor_component(value: &str) -> Option<i32> {
+    value.parse::<f64>().ok().and_then(|value| {
+        if value.is_finite() {
+            Some(value.round() as i32)
+        } else {
+            None
+        }
+    })
+}
+
 fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len()
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
             && let (Some(high), Some(low)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2]))
         {
             decoded.push(high * 16 + low);
@@ -313,28 +428,71 @@ Item {
         return point.x >= a.x && point.x < a.x + a.width && point.y >= a.y && point.y < a.y + a.height;
     }
 
-    function outputForCursor(point) {
-        if (typeof Workspace.screenAt === "function") {
-            var screen = Workspace.screenAt(point);
+    function kwinWorkspace() {
+        if (typeof workspace !== "undefined") {
+            return workspace;
+        }
+        if (typeof Workspace !== "undefined") {
+            return Workspace;
+        }
+        return null;
+    }
+
+    function pointValue(point, name, fallback) {
+        if (!point) return fallback;
+        var value = point[name];
+        if (typeof value === "function") value = value.call(point);
+        value = Number(value);
+        return isFinite(value) ? value : fallback;
+    }
+
+    function cursorPoint(api) {
+        var fallback = { x: 0, y: 0 };
+        if (!api || !api.cursorPos) return fallback;
+        return {
+            x: pointValue(api.cursorPos, "x", 0),
+            y: pointValue(api.cursorPos, "y", 0)
+        };
+    }
+
+    function currentDesktop(api) {
+        return api && api.currentDesktop ? api.currentDesktop : undefined;
+    }
+
+    function outputForCursor(api, point) {
+        if (api && typeof api.screenAt === "function") {
+            var screen = api.screenAt(point);
             if (screen) {
                 return screen;
             }
         }
 
-        var active = Workspace.activeWindow;
-        if (active) {
-            var activeArea = Workspace.clientArea(KWin.MaximizeArea, active.output, Workspace.currentDesktop);
+        var active = api ? api.activeWindow : null;
+        if (active && typeof api.clientArea === "function") {
+            var activeArea = api.clientArea(KWin.MaximizeArea, active.output, currentDesktop(api));
             if (areaContainsPoint(activeArea, point)) {
                 return active.output;
             }
         }
 
-        return Workspace.activeScreen;
+        return api ? api.activeScreen : null;
+    }
+
+    function clientAreaFor(api, output, point) {
+        if (api && typeof api.clientArea === "function" && output) {
+            var a = api.clientArea(KWin.MaximizeArea, output, currentDesktop(api));
+            if (a && a.width > 0 && a.height > 0) {
+                return a;
+            }
+        }
+
+        return { x: point.x, y: point.y, width: 1, height: 1 };
     }
 
     function openRoot() {
-        var cur = Workspace.cursorPos;
-        var a = Workspace.clientArea(KWin.MaximizeArea, outputForCursor(cur), Workspace.currentDesktop);
+        var api = kwinWorkspace();
+        var cur = cursorPoint(api);
+        var a = clientAreaFor(api, outputForCursor(api, cur), cur);
         area = { x: a.x, y: a.y, width: a.width, height: a.height };
         panels = [{ actions: payload.actions || [], x: cur.x - a.x, y: cur.y - a.y }];
         repeater.model = panels.length;
@@ -498,6 +656,101 @@ Item {
 }
 "##;
 
+const KWIN_CURSOR_QML: &str = r##"
+import QtQuick
+import org.kde.kwin
+
+Item {
+    id: root
+
+    property string reqId: "__REQ_ID__"
+    property int callbackPort: __PORT__
+
+    function request(x, y, source) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET",
+            "http://127.0.0.1:" + callbackPort +
+            "/cursor?req=" + encodeURIComponent(reqId) +
+            "&x=" + encodeURIComponent(String(x)) +
+            "&y=" + encodeURIComponent(String(y)) +
+            "&source=" + encodeURIComponent(source || "kwin"));
+        xhr.send();
+    }
+
+    function kwinWorkspace() {
+        if (typeof workspace !== "undefined") {
+            return workspace;
+        }
+        if (typeof Workspace !== "undefined") {
+            return Workspace;
+        }
+        return null;
+    }
+
+    function pointValue(point, name, fallback) {
+        if (!point) return fallback;
+        var value = point[name];
+        if (typeof value === "function") value = value.call(point);
+        value = Number(value);
+        return isFinite(value) ? value : fallback;
+    }
+
+    Component.onCompleted: {
+        var api = kwinWorkspace();
+        if (!api || !api.cursorPos) {
+            return;
+        }
+
+        var pos = api.cursorPos;
+        root.request(pointValue(pos, "x", 0), pointValue(pos, "y", 0), "kwin");
+    }
+}
+"##;
+
+fn read_cursor_from_kwin() -> Option<CursorPayload> {
+    let mut timing = crate::timing::Span::new("cursor");
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        timing.mark("skip", "reason=not_wayland");
+        return None;
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").ok()?;
+    listener.set_nonblocking(false).ok()?;
+    let port = listener.local_addr().ok()?.port();
+    let req_id = request_id();
+    let plugin = format!("kanyrun-cursor-{req_id}");
+    let qml = KWIN_CURSOR_QML
+        .replace("__PORT__", &port.to_string())
+        .replace("__REQ_ID__", &req_id);
+    let qml_path = write_kwin_qml(&qml, &format!("cursor-{req_id}")).ok()?;
+    timing.mark("prepare", format!("port={port}"));
+
+    let _ = unload_kwin_script(&plugin);
+    let load_result = load_kwin_script(&qml_path, &plugin).and_then(|_| start_kwin_scripts());
+    if load_result.is_err() {
+        let _ = fs::remove_file(&qml_path);
+        timing.mark("load_failed", "");
+        return None;
+    }
+    timing.mark("script_started", "");
+
+    let result = wait_for_cursor(listener, &req_id, Duration::from_millis(75))
+        .ok()
+        .flatten();
+    timing.mark(
+        "wait_cursor",
+        if result.is_some() {
+            "status=ok"
+        } else {
+            "status=missing"
+        },
+    );
+    let _ = unload_kwin_script(&plugin);
+    let _ = fs::remove_file(&qml_path);
+    timing.mark("cleanup", "");
+    result
+}
+
 pub struct WarmPresenter {
     program: PathBuf,
     show_icons: bool,
@@ -554,6 +807,7 @@ impl WarmPresenter {
             return Ok(());
         }
 
+        let mut timing = crate::timing::Span::new("ui_child");
         let display = self.program.display().to_string();
         let mut child = Command::new(&self.program)
             .arg("--serve-stdio")
@@ -577,6 +831,7 @@ impl WarmPresenter {
             stdin,
             stdout: BufReader::new(stdout),
         });
+        timing.mark("spawn", display);
         Ok(())
     }
 
@@ -603,16 +858,19 @@ impl WarmPresenter {
             .as_mut()
             .ok_or_else(|| "warm ui child is not running".to_string())?;
 
+        let mut timing = crate::timing::Span::new("ui_roundtrip");
         writeln!(child.stdin, "{}", input.len())
             .and_then(|_| child.stdin.write_all(input.as_bytes()))
             .and_then(|_| child.stdin.flush())
             .map_err(|error| format!("failed to send payload to warm ui: {error}"))?;
+        timing.mark("send_payload", format!("bytes={}", input.len()));
 
         let mut response = String::new();
         let bytes = child
             .stdout
             .read_line(&mut response)
             .map_err(|error| format!("failed to read response from warm ui: {error}"))?;
+        timing.mark("read_response", format!("bytes={bytes}"));
         if bytes == 0 {
             return Err("warm ui closed its output stream unexpectedly".into());
         }
@@ -634,7 +892,18 @@ impl Drop for WarmPresenter {
 
 impl MenuPresenter for WarmPresenter {
     fn show_menu(&mut self, menu: &MenuModel) -> Result<Option<String>, String> {
-        let input = serialize_menu(menu, self.show_icons)?;
+        let mut timing = crate::timing::Span::new("presenter");
+        let cursor = read_cursor_from_kwin();
+        timing.mark(
+            "cursor",
+            if cursor.is_some() {
+                "status=ok"
+            } else {
+                "status=none"
+            },
+        );
+        let input = serialize_menu_with_cursor(menu, self.show_icons, cursor)?;
+        timing.mark("serialize_menu", format!("bytes={}", input.len()));
         self.request_via_child(&input)
     }
 }
@@ -672,7 +941,10 @@ impl UiProcessRunner for SystemUiProcessRunner {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return if stderr.is_empty() {
-                Err(format!("ui command {display} exited with status {}", output.status))
+                Err(format!(
+                    "ui command {display} exited with status {}",
+                    output.status
+                ))
             } else {
                 Err(format!(
                     "ui command {display} exited with status {}: {stderr}",
@@ -685,12 +957,49 @@ impl UiProcessRunner for SystemUiProcessRunner {
     }
 }
 
-fn show_menu_with<R>(menu: &MenuModel, show_icons: bool, runner: &R, program: &Path) -> Result<Option<String>, String>
+#[cfg(test)]
+fn show_menu_with<R>(
+    menu: &MenuModel,
+    show_icons: bool,
+    runner: &R,
+    program: &Path,
+) -> Result<Option<String>, String>
 where
     R: UiProcessRunner,
 {
     let input = serialize_menu(menu, show_icons)?;
     let output = runner.run(program, &input)?;
+
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string))
+}
+
+fn show_qt_menu_with_cursor<R>(
+    menu: &MenuModel,
+    show_icons: bool,
+    runner: &R,
+    program: &Path,
+) -> Result<Option<String>, String>
+where
+    R: UiProcessRunner,
+{
+    let mut timing = crate::timing::Span::new("oneshot_presenter");
+    let cursor = read_cursor_from_kwin();
+    timing.mark(
+        "cursor",
+        if cursor.is_some() {
+            "status=ok"
+        } else {
+            "status=none"
+        },
+    );
+    let input = serialize_menu_with_cursor(menu, show_icons, cursor)?;
+    timing.mark("serialize_menu", format!("bytes={}", input.len()));
+    let output = runner.run(program, &input)?;
+    timing.mark("run_ui", format!("bytes={}", output.len()));
 
     Ok(output
         .lines()
@@ -733,8 +1042,17 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+#[cfg(test)]
 pub(crate) fn serialize_menu(menu: &MenuModel, show_icons: bool) -> Result<String, String> {
-    serde_json::to_string(&MenuPayload::from_menu(menu, show_icons))
+    serialize_menu_with_cursor(menu, show_icons, None)
+}
+
+fn serialize_menu_with_cursor(
+    menu: &MenuModel,
+    show_icons: bool,
+    cursor: Option<CursorPayload>,
+) -> Result<String, String> {
+    serde_json::to_string(&MenuPayload::from_menu(menu, show_icons, cursor))
         .map_err(|error| format!("failed to serialize menu payload: {error}"))
 }
 
@@ -742,17 +1060,27 @@ pub(crate) fn serialize_menu(menu: &MenuModel, show_icons: bool) -> Result<Strin
 struct MenuPayload {
     title: String,
     show_icons: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<CursorPayload>,
     actions: Vec<MenuActionPayload>,
 }
 
 impl MenuPayload {
-    fn from_menu(menu: &MenuModel, show_icons: bool) -> Self {
+    fn from_menu(menu: &MenuModel, show_icons: bool, cursor: Option<CursorPayload>) -> Self {
         Self {
             title: menu.title.clone(),
             show_icons,
+            cursor,
             actions: menu.actions.iter().map(MenuActionPayload::from).collect(),
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CursorPayload {
+    x: i32,
+    y: i32,
+    source: String,
 }
 
 #[derive(Serialize)]
@@ -809,8 +1137,7 @@ mod tests {
 
     impl super::UiProcessRunner for FakeUiRunner {
         fn run(&self, program: &Path, input: &str) -> Result<String, String> {
-            self.program
-                .replace(Some(program.display().to_string()));
+            self.program.replace(Some(program.display().to_string()));
             self.input.replace(Some(input.to_string()));
             self.output.clone()
         }
@@ -826,7 +1153,8 @@ mod tests {
         assert_eq!(selected.as_deref(), Some("copy"));
         assert_eq!(runner.program.borrow().as_deref(), Some("fake-ui"));
 
-        let payload: Value = serde_json::from_str(runner.input.borrow().as_deref().unwrap()).unwrap();
+        let payload: Value =
+            serde_json::from_str(runner.input.borrow().as_deref().unwrap()).unwrap();
         assert_eq!(payload["title"], "Text");
         assert_eq!(payload["show_icons"], true);
         assert_eq!(payload["actions"][0]["id"], "search");
@@ -844,7 +1172,8 @@ mod tests {
 
         assert_eq!(selected.as_deref(), Some("search-github"));
 
-        let payload: Value = serde_json::from_str(runner.input.borrow().as_deref().unwrap()).unwrap();
+        let payload: Value =
+            serde_json::from_str(runner.input.borrow().as_deref().unwrap()).unwrap();
         assert_eq!(payload["actions"][0]["submenu"][0]["id"], "search-default");
         assert_eq!(payload["actions"][0]["submenu"][1]["id"], "search-github");
     }
@@ -858,7 +1187,8 @@ mod tests {
 
         assert_eq!(selected.as_deref(), Some("copy"));
 
-        let payload: Value = serde_json::from_str(runner.input.borrow().as_deref().unwrap()).unwrap();
+        let payload: Value =
+            serde_json::from_str(runner.input.borrow().as_deref().unwrap()).unwrap();
         assert_eq!(payload["actions"][1]["is_separator"], true);
         assert_eq!(payload["actions"][1]["label"], "---");
     }

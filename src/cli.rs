@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CliRequest {
     pub force_menu: bool,
+    #[serde(default)]
+    pub root_menu: bool,
     pub test_menu: bool,
     pub text: Option<String>,
     pub files: Vec<std::path::PathBuf>,
@@ -39,6 +41,7 @@ where
         match arg.as_str() {
             "--help" | "-h" => return Ok(ParseOutcome::Help(help_text(&program))),
             "--menu" => request.force_menu = true,
+            "--root-menu" => request.root_menu = true,
             "--test" => request.test_menu = true,
             "--menu-file" => {
                 let value = args
@@ -47,7 +50,9 @@ where
                 request.menu_file = Some(std::path::PathBuf::from(value));
             }
             "--text" => {
-                let value = args.next().ok_or_else(|| "missing value for --text".to_string())?;
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing value for --text".to_string())?;
                 request.text = Some(value);
             }
             "--files" => {
@@ -75,13 +80,15 @@ where
                 let value = args
                     .next()
                     .ok_or_else(|| "missing value for --daemon-idle-timeout".to_string())?;
-                request.daemon_idle_timeout_secs = Some(parse_timeout_secs("--daemon-idle-timeout", &value)?);
+                request.daemon_idle_timeout_secs =
+                    Some(parse_timeout_secs("--daemon-idle-timeout", &value)?);
             }
             "--ui-idle-timeout" => {
                 let value = args
                     .next()
                     .ok_or_else(|| "missing value for --ui-idle-timeout".to_string())?;
-                request.ui_idle_timeout_secs = Some(parse_timeout_secs("--ui-idle-timeout", &value)?);
+                request.ui_idle_timeout_secs =
+                    Some(parse_timeout_secs("--ui-idle-timeout", &value)?);
             }
             other => return Err(format!("unknown argument: {other}")),
         }
@@ -93,7 +100,7 @@ where
 fn help_text(program: &str) -> String {
     format!(
         "Usage: {program} [OPTIONS]\n\n
-actions:\n  no explicit input        Read clipboard or primary selection and resolve context\n  --text VALUE             Use the provided text or URL as context\n  --files PATH...          Use one or more selected file or directory paths\n\noptions:\n  --menu                   Force a menu even when a direct action rule matches\n  --test                   Force the first configured menu to display\n  --menu-file PATH         Load menus from a specific menu.ini or menu.conf file\n  --from-clipboard         Prefer clipboard text over primary selection\n  --from-primary           Prefer primary selection over clipboard text\n  --oneshot                Bypass the resident daemon and run once in the current process\n  --daemon-idle-timeout S  Exit the daemon after S seconds of inactivity\n  --ui-idle-timeout S      Reap the warm UI child after S seconds of inactivity\n  -h, --help               Show this help message\n\nexamples:\n  {program}\n  {program} --test\n  {program} --menu-file ~/.config/kanyrun/menu-work.ini --test\n  {program} --text 'https://example.com'\n  {program} --text 'hello world' --menu\n  {program} --files /tmp/file.pdf\n  {program} --files /tmp/a.txt /tmp/b.txt\n  {program} --daemon-idle-timeout 300 --ui-idle-timeout 15\n"
+actions:\n  no explicit input        Show the default root menu\n  --root-menu              Show the default root menu without reading selection or clipboard\n  --text VALUE             Use the provided text or URL as context\n  --files PATH...          Use one or more selected file or directory paths\n\noptions:\n  --menu                   Force a menu even when a direct action rule matches\n  --test                   Force the first configured menu to display\n  --menu-file PATH         Load menus from a specific menu.ini or menu.conf file\n  --from-clipboard         Use clipboard content as context\n  --from-primary           Use primary selection as context\n  --oneshot                Bypass the resident daemon and run once in the current process\n  --daemon-idle-timeout S  Exit the daemon after S seconds of inactivity\n  --ui-idle-timeout S      Reap the warm UI child after S seconds of inactivity\n  -h, --help               Show this help message\n\nexamples:\n  {program}\n  {program} --root-menu\n  {program} --test\n  {program} --menu-file ~/.config/kanyrun/menu-work.ini --test\n  {program} --text 'https://example.com'\n  {program} --text 'hello world' --menu\n  {program} --from-primary --menu\n  {program} --from-clipboard --menu\n  {program} --files /tmp/file.pdf\n  {program} --files /tmp/a.txt /tmp/b.txt\n  {program} --daemon-idle-timeout 300 --ui-idle-timeout 15\n"
     )
 }
 
@@ -116,6 +123,7 @@ mod tests {
             outcome,
             ParseOutcome::Request(CliRequest {
                 force_menu: true,
+                root_menu: false,
                 test_menu: false,
                 text: Some(ref value),
                 files,
@@ -143,7 +151,10 @@ mod tests {
 
         match outcome {
             ParseOutcome::Request(request) => {
-                assert_eq!(request.files, vec![PathBuf::from("/tmp/one.txt"), PathBuf::from("/tmp/two.pdf")]);
+                assert_eq!(
+                    request.files,
+                    vec![PathBuf::from("/tmp/one.txt"), PathBuf::from("/tmp/two.pdf")]
+                );
                 assert!(request.from_primary);
                 assert!(!request.oneshot);
             }
@@ -153,7 +164,8 @@ mod tests {
 
     #[test]
     fn parses_menu_file_override() {
-        let outcome = parse_from(["kanyrun", "--menu-file", "/tmp/menu-work.ini", "--test"]).unwrap();
+        let outcome =
+            parse_from(["kanyrun", "--menu-file", "/tmp/menu-work.ini", "--test"]).unwrap();
 
         assert!(matches!(
             outcome,
@@ -166,6 +178,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_root_menu_flag() {
+        let outcome = parse_from(["kanyrun", "--root-menu"]).unwrap();
+
+        assert!(matches!(
+            outcome,
+            ParseOutcome::Request(CliRequest {
+                root_menu: true,
+                force_menu: false,
+                text: None,
+                files,
+                ..
+            }) if files.is_empty()
+        ));
+    }
+
+    #[test]
     fn returns_help_output() {
         let outcome = parse_from(["kanyrun", "--help"]).unwrap();
 
@@ -174,6 +202,7 @@ mod tests {
                 assert!(help.contains("Usage: kanyrun [OPTIONS]"));
                 assert!(help.contains("--files PATH..."));
                 assert!(help.contains("--test"));
+                assert!(help.contains("--root-menu"));
                 assert!(help.contains("--menu-file PATH"));
             }
             ParseOutcome::Request(_) => panic!("expected help"),
@@ -189,6 +218,7 @@ mod tests {
             ParseOutcome::Request(CliRequest {
                 test_menu: true,
                 force_menu: false,
+                root_menu: false,
                 text: None,
                 files,
                 menu_file: None,

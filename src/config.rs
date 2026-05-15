@@ -1,6 +1,6 @@
 use chrono::Local;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs;
@@ -186,12 +186,22 @@ pub fn config_paths_from(
 }
 
 pub fn load(paths: &ConfigPaths, menu_override: Option<&Path>) -> Result<LoadedConfig, String> {
-    let config_toml = prefer_existing(paths.user_dir.join("config.toml"), paths.bundled_dir.join("config.toml"));
+    let config_toml = prefer_existing(
+        paths.user_dir.join("config.toml"),
+        paths.bundled_dir.join("config.toml"),
+    );
     let app: AppConfig = read_toml(&config_toml)?;
     let mut sources = resolve_config_sources(paths, app.menus.as_ref(), menu_override);
     let menu = match read_menu_config(&sources.menu_file) {
         Ok(menu) => menu,
-        Err(_) if menu_override.is_none() && app.menus.as_ref().and_then(|menus| menus.default_file.as_deref()).is_some() => {
+        Err(_)
+            if menu_override.is_none()
+                && app
+                    .menus
+                    .as_ref()
+                    .and_then(|menus| menus.default_file.as_deref())
+                    .is_some() =>
+        {
             sources = resolve_config_sources(paths, None, None);
             read_menu_config(&sources.menu_file)?
         }
@@ -207,12 +217,19 @@ pub fn resolve_config_sources(
     menu_override: Option<&Path>,
 ) -> ResolvedConfigPaths {
     ResolvedConfigPaths {
-        config_toml: prefer_existing(paths.user_dir.join("config.toml"), paths.bundled_dir.join("config.toml")),
+        config_toml: prefer_existing(
+            paths.user_dir.join("config.toml"),
+            paths.bundled_dir.join("config.toml"),
+        ),
         menu_file: resolve_menu_file(paths, menus, menu_override),
     }
 }
 
-fn resolve_menu_file(paths: &ConfigPaths, menus: Option<&MenusConfig>, menu_override: Option<&Path>) -> PathBuf {
+fn resolve_menu_file(
+    paths: &ConfigPaths,
+    menus: Option<&MenusConfig>,
+    menu_override: Option<&Path>,
+) -> PathBuf {
     if let Some(path) = menu_override {
         return path.to_path_buf();
     }
@@ -311,8 +328,7 @@ fn read_menu_config(path: &Path) -> Result<MenuConfig, String> {
 fn read_ini_menu(path: &Path) -> Result<MenuConfig, String> {
     let raw = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    parse_ini_menu(&raw)
-        .map_err(|error| format!("failed to parse {}: {error}", path.display()))
+    parse_ini_menu(&raw).map_err(|error| format!("failed to parse {}: {error}", path.display()))
 }
 
 fn parse_ini_menu(raw: &str) -> Result<MenuConfig, String> {
@@ -330,11 +346,16 @@ fn parse_ini_menu(raw: &str) -> Result<MenuConfig, String> {
         match line.kind {
             ParsedMenuLineKind::Category1 => {
                 if line.indent != 0 {
-                    return Err(format!("top-level submenu must not be indented: {}", line.content));
+                    return Err(format!(
+                        "top-level submenu must not be indented: {}",
+                        line.content
+                    ));
                 }
 
-                let (label, extensions, explicit_id, context_default) = parse_submenu_header(&line.content);
-                let submenu_id = explicit_id.unwrap_or_else(|| next_submenu_id(&mut submenu_counter));
+                let (label, extensions, explicit_id, context_default) =
+                    parse_submenu_header(&line.content);
+                let submenu_id =
+                    explicit_id.unwrap_or_else(|| next_submenu_id(&mut submenu_counter));
                 menus.push(MenuDefinition {
                     id: submenu_id.clone(),
                     title: label.to_string(),
@@ -353,19 +374,27 @@ fn parse_ini_menu(raw: &str) -> Result<MenuConfig, String> {
                     return Err("second-level submenu requires a parent submenu".into());
                 };
                 if line.indent == 0 {
-                    return Err(format!("second-level submenu must be indented: {}", line.content));
+                    return Err(format!(
+                        "second-level submenu must be indented: {}",
+                        line.content
+                    ));
                 }
 
                 match level1_child_indent {
                     Some(indent) if line.indent != indent => {
-                        return Err(format!("second-level submenu must align with submenu children: {}", line.content));
+                        return Err(format!(
+                            "second-level submenu must align with submenu children: {}",
+                            line.content
+                        ));
                     }
                     Some(_) => {}
                     None => level1_child_indent = Some(line.indent),
                 }
 
-                let (label, extensions, explicit_id, context_default) = parse_submenu_header(&line.content);
-                let submenu_id = explicit_id.unwrap_or_else(|| next_submenu_id(&mut submenu_counter));
+                let (label, extensions, explicit_id, context_default) =
+                    parse_submenu_header(&line.content);
+                let submenu_id =
+                    explicit_id.unwrap_or_else(|| next_submenu_id(&mut submenu_counter));
                 menus.push(MenuDefinition {
                     id: submenu_id.clone(),
                     title: label.clone(),
@@ -374,9 +403,11 @@ fn parse_ini_menu(raw: &str) -> Result<MenuConfig, String> {
                     actions: Vec::new(),
                 });
                 let child_index = menus.len() - 1;
-                menus[parent_index]
-                    .actions
-                    .push(submenu_action(&label, &submenu_id, &mut action_counter));
+                menus[parent_index].actions.push(submenu_action(
+                    &label,
+                    &submenu_id,
+                    &mut action_counter,
+                ));
                 level2_index = Some(child_index);
                 level2_child_indent = None;
             }
@@ -475,7 +506,8 @@ fn classify_menu_line(raw_line: &str) -> ParsedMenuLine {
 }
 
 fn parse_submenu_header(content: &str) -> (String, Vec<String>, Option<String>, bool) {
-    let (label_with_id, extensions) = if let Some((label, filter_string)) = content.split_once('|') {
+    let (label_with_id, extensions) = if let Some((label, filter_string)) = content.split_once('|')
+    {
         let extensions = filter_string
             .split_whitespace()
             .filter_map(|token| {
@@ -488,21 +520,22 @@ fn parse_submenu_header(content: &str) -> (String, Vec<String>, Option<String>, 
         (content, Vec::new())
     };
 
-    let (title_raw, explicit_id, context_default) = if let Some((title, id)) = label_with_id.rsplit_once("::") {
-        let title = title.trim();
-        let id = id.trim();
-        let (id, context_default) = match id.strip_prefix('@') {
-            Some(stripped) => (stripped.trim(), true),
-            None => (id, false),
-        };
-        if !title.is_empty() && !id.is_empty() {
-            (title, Some(id.to_string()), context_default)
+    let (title_raw, explicit_id, context_default) =
+        if let Some((title, id)) = label_with_id.rsplit_once("::") {
+            let title = title.trim();
+            let id = id.trim();
+            let (id, context_default) = match id.strip_prefix('@') {
+                Some(stripped) => (stripped.trim(), true),
+                None => (id, false),
+            };
+            if !title.is_empty() && !id.is_empty() {
+                (title, Some(id.to_string()), context_default)
+            } else {
+                (label_with_id.trim(), None, false)
+            }
         } else {
             (label_with_id.trim(), None, false)
-        }
-    } else {
-        (label_with_id.trim(), None, false)
-    };
+        };
 
     let title = strip_mnemonic_suffix(title_raw).trim().to_string();
     (title, extensions, explicit_id, context_default)
@@ -519,7 +552,10 @@ fn split_item_line(content: &str) -> (String, String) {
         })
         .unwrap_or_else(|| {
             let trimmed = content.trim();
-            (strip_mnemonic_suffix(trimmed).trim().to_string(), trimmed.to_string())
+            (
+                strip_mnemonic_suffix(trimmed).trim().to_string(),
+                trimmed.to_string(),
+            )
         })
 }
 
@@ -648,7 +684,10 @@ fn actions_for_indented_line<'a>(
     };
 
     match *level1_child_indent {
-        Some(indent) if line.indent < indent => Err(format!("submenu child indentation is too shallow: {}", line.content)),
+        Some(indent) if line.indent < indent => Err(format!(
+            "submenu child indentation is too shallow: {}",
+            line.content
+        )),
         Some(indent) if line.indent == indent => {
             *level2_index = None;
             *level2_child_indent = None;
@@ -656,7 +695,10 @@ fn actions_for_indented_line<'a>(
         }
         Some(indent) => {
             let Some(level2) = *level2_index else {
-                return Err(format!("deeply indented item requires a second-level submenu: {}", line.content));
+                return Err(format!(
+                    "deeply indented item requires a second-level submenu: {}",
+                    line.content
+                ));
             };
             match *level2_child_indent {
                 Some(level2_indent) if line.indent != level2_indent => Err(format!(
@@ -668,7 +710,10 @@ fn actions_for_indented_line<'a>(
                     *level2_child_indent = Some(line.indent);
                     Ok(&mut menus[level2].actions)
                 }
-                None => Err(format!("deeply indented item requires a second-level submenu: {}", line.content)),
+                None => Err(format!(
+                    "deeply indented item requires a second-level submenu: {}",
+                    line.content
+                )),
             }
         }
         None => {
@@ -679,7 +724,6 @@ fn actions_for_indented_line<'a>(
         }
     }
 }
-
 
 fn sanitize_id(label: &str, prefix: &str, counter: &mut usize) -> String {
     let mut id = label
@@ -718,8 +762,8 @@ fn next_action_id(prefix: &str, counter: &mut usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        bundled_config_dir_for, config_paths_from, load, parse_ini_menu, render_quickmenu_command_template,
-        resolve_config_sources,
+        bundled_config_dir_for, config_paths_from, load, parse_ini_menu,
+        render_quickmenu_command_template, resolve_config_sources,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -756,20 +800,28 @@ mod tests {
         );
 
         assert_eq!(paths.user_dir, std::path::PathBuf::from("/tmp/xdg/kanyrun"));
-        assert_eq!(paths.bundled_dir, std::path::PathBuf::from("/tmp/repo/assets/config"));
+        assert_eq!(
+            paths.bundled_dir,
+            std::path::PathBuf::from("/tmp/repo/assets/config")
+        );
     }
 
     #[test]
     fn prefers_menu_override_when_provided() {
         let paths = config_paths_from(Some("/tmp/xdg".into()), None, "/tmp/repo".into());
-        let resolved = resolve_config_sources(&paths, None, Some(Path::new("/tmp/custom/menu.ini")));
+        let resolved =
+            resolve_config_sources(&paths, None, Some(Path::new("/tmp/custom/menu.ini")));
 
         assert_eq!(resolved.menu_file, PathBuf::from("/tmp/custom/menu.ini"));
     }
 
     #[test]
     fn honors_default_menu_file_from_config() {
-        let paths = config_paths_from(Some("/tmp/xdg".into()), Some("/tmp/home".into()), "/tmp/repo".into());
+        let paths = config_paths_from(
+            Some("/tmp/xdg".into()),
+            Some("/tmp/home".into()),
+            "/tmp/repo".into(),
+        );
         let resolved = resolve_config_sources(
             &paths,
             Some(&super::MenusConfig {
@@ -780,7 +832,10 @@ mod tests {
             None,
         );
 
-        assert_eq!(resolved.menu_file, PathBuf::from("/tmp/xdg/kanyrun/menu-work.ini"));
+        assert_eq!(
+            resolved.menu_file,
+            PathBuf::from("/tmp/xdg/kanyrun/menu-work.ini")
+        );
     }
 
     #[test]
@@ -810,14 +865,23 @@ mod tests {
 
         fs::write(bundled.join("config.toml"), "[providers.duckduckgo]\nlabel='DuckDuckGo'\nurl='https://duckduckgo.com/?q={query}'\ndefault=true\n").unwrap();
         fs::write(bundled.join("menu.ini"), "Search|@search:duckduckgo\n").unwrap();
-        fs::write(user.join("config.toml"), "[providers.github]\nlabel='GitHub'\nurl='https://github.com/search?q={query}'\n").unwrap();
+        fs::write(
+            user.join("config.toml"),
+            "[providers.github]\nlabel='GitHub'\nurl='https://github.com/search?q={query}'\n",
+        )
+        .unwrap();
 
         let paths = config_paths_from(Some(temp.path().join("xdg")), None, repo_root);
         let loaded = load(&paths, None).unwrap();
 
         assert!(loaded.app.providers.contains_key("github"));
         assert_eq!(loaded.menu.menus[0].actions[0].label, "Search");
-        assert!(loaded.sources.config_toml.ends_with("xdg/kanyrun/config.toml"));
+        assert!(
+            loaded
+                .sources
+                .config_toml
+                .ends_with("xdg/kanyrun/config.toml")
+        );
         assert!(loaded.sources.menu_file.ends_with("assets/config/menu.ini"));
     }
 
@@ -831,7 +895,10 @@ mod tests {
         assert_eq!(menu.menus[0].actions.len(), 2);
         assert_eq!(menu.menus[1].actions.len(), 4);
         assert_eq!(menu.menus[2].actions.len(), 1);
-        assert_eq!(menu.menus[1].actions[1].submenu.as_deref(), Some("submenu-1"));
+        assert_eq!(
+            menu.menus[1].actions[1].submenu.as_deref(),
+            Some("submenu-1")
+        );
         assert_eq!(menu.menus[2].actions[0].label, "VSCode");
     }
 
@@ -842,10 +909,10 @@ mod tests {
         assert!(error.contains("submenu child must be indented"));
     }
 
-
     #[test]
     fn strips_quickmenu_mnemonic_suffixes() {
-        let menu = parse_ini_menu("谷歌(&G)|https://www.google.com/search?q=%s\n-常用(&A)\n").unwrap();
+        let menu =
+            parse_ini_menu("谷歌(&G)|https://www.google.com/search?q=%s\n-常用(&A)\n").unwrap();
 
         assert_eq!(menu.menus[0].actions[0].label, "谷歌");
         assert_eq!(menu.menus[1].title, "常用");
@@ -855,8 +922,14 @@ mod tests {
     fn infers_quickmenu_url_and_path_commands() {
         let menu = parse_ini_menu("Google|https://example.com?q=%s\nApps|~/Apps\n").unwrap();
 
-        assert_eq!(menu.menus[0].actions[0].command.as_ref().unwrap().kind, "quick-url");
-        assert_eq!(menu.menus[0].actions[1].command.as_ref().unwrap().kind, "quick-path");
+        assert_eq!(
+            menu.menus[0].actions[0].command.as_ref().unwrap().kind,
+            "quick-url"
+        );
+        assert_eq!(
+            menu.menus[0].actions[1].command.as_ref().unwrap().kind,
+            "quick-path"
+        );
     }
 
     #[test]
@@ -871,7 +944,8 @@ mod tests {
 
     #[test]
     fn renders_quickmenu_time_variables() {
-        let rendered = render_quickmenu_command_template("%A_YYYY%-%A_MM%-%A_DD% %A_Hour%:%A_Min%:%A_Sec%");
+        let rendered =
+            render_quickmenu_command_template("%A_YYYY%-%A_MM%-%A_DD% %A_Hour%:%A_Min%:%A_Sec%");
 
         assert_eq!(rendered.len(), 19);
         assert_eq!(&rendered[4..5], "-");
@@ -904,12 +978,17 @@ mod tests {
         )
         .unwrap();
 
-        assert!(loaded.menu.menus.iter().any(|menu| menu.id == "selectedtext"));
-        assert!(loaded
-            .menu
-            .menus
-            .iter()
-            .flat_map(|menu| menu.actions.iter())
-            .any(|action| action.command.as_ref().map(|command| command.kind.as_str()) == Some("search")));
+        assert!(loaded.menu.menus.iter().any(|menu| menu.id == "root"));
+        assert!(
+            loaded
+                .menu
+                .menus
+                .iter()
+                .flat_map(|menu| menu.actions.iter())
+                .any(
+                    |action| action.command.as_ref().map(|command| command.kind.as_str())
+                        == Some("search")
+                )
+        );
     }
 }

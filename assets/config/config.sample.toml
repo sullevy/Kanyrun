@@ -58,11 +58,6 @@ behavior = "menu"
 menu = "file-list"
 
 [[rules]]
-when = { kind = "text" }
-behavior = "menu"
-menu = "text"
-
-[[rules]]
 when = { kind = "file" }
 behavior = "menu"
 menu = "file"
