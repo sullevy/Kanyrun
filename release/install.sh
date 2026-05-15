@@ -22,6 +22,7 @@ mkdir -p "$INSTALL_ROOT" "$BUNDLE_CONFIG_DIR" "$BIN_DIR" "$CONFIG_DIR" "$SAMPLES
 install -m 0755 "$SOURCE_DIR/kanyrun" "$INSTALL_ROOT/kanyrun"
 install -m 0755 "$SOURCE_DIR/kanyrun-ui" "$INSTALL_ROOT/kanyrun-ui"
 install -m 0755 "$SOURCE_DIR/kanyrun-open.sh" "$INSTALL_ROOT/kanyrun-open.sh"
+install -m 0644 "$SOURCE_DIR/LICENSE" "$INSTALL_ROOT/LICENSE"
 rm -f "$INSTALL_ROOT/get-path" "$BIN_DIR/get-path"
 if [ -x "$SOURCE_DIR/get-file-path.sh" ]; then
     install -m 0755 "$SOURCE_DIR/get-file-path.sh" "$INSTALL_ROOT/get-file-path.sh"
@@ -31,6 +32,9 @@ install -m 0644 "$SOURCE_DIR/config/menu.ini" "$BUNDLE_CONFIG_DIR/menu.ini"
 install -m 0644 "$SOURCE_DIR/config/menu_sample.ini" "$SAMPLES_DIR/menu_sample.ini"
 install -m 0644 "$SOURCE_DIR/config/config.sample.toml" "$SAMPLES_DIR/config.sample.toml"
 install -m 0644 "$SOURCE_DIR/使用说明.md" "$INSTALL_ROOT/使用说明.md"
+if [ -f "$SOURCE_DIR/USAGE.md" ]; then
+    install -m 0644 "$SOURCE_DIR/USAGE.md" "$INSTALL_ROOT/USAGE.md"
+fi
 
 ln -sfn "$INSTALL_ROOT/kanyrun" "$BIN_DIR/kanyrun"
 

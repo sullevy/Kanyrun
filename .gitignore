@@ -2,8 +2,14 @@
 # Ignore root files by default; keep only public docs/scripts at repository root.
 /*
 !/.gitignore
+!/LICENSE
+!/Cargo.toml
+!/Cargo.lock
 !/README
 !/README.*
+!/README_*.md
+README-SPEC.md
+!/USAGE.md
 !/Readme
 !/Readme.*
 !/readme

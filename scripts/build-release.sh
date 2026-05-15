@@ -46,6 +46,8 @@ install -m 0755 "$RUST_BINARY" "$RELEASE_DIR/kanyrun"
 install -m 0755 "$UI_BINARY" "$RELEASE_DIR/kanyrun-ui"
 install -m 0755 "$ROOT_DIR/install.sh" "$RELEASE_DIR/install.sh"
 install -m 0755 "$ROOT_DIR/uninstall.sh" "$RELEASE_DIR/uninstall.sh"
+install -m 0644 "$ROOT_DIR/LICENSE" "$RELEASE_DIR/LICENSE"
+install -m 0644 "$ROOT_DIR/USAGE.md" "$RELEASE_DIR/USAGE.md"
 if [ ! -x "$KANYRUN_OPEN_SOURCE" ]; then
     printf 'kanyrun-open source script is missing: %s\n' "$KANYRUN_OPEN_SOURCE" >&2
     exit 1
