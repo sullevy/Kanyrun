@@ -1,0 +1,66 @@
+# Root-level upload whitelist
+# Ignore root files by default; keep only public docs/scripts at repository root.
+/*
+!/.gitignore
+!/README
+!/README.*
+!/Readme
+!/Readme.*
+!/readme
+!/readme.*
+!/使用说明.md
+!/install.sh
+!/uninstall.sh
+!/kanyrun-open.sh
+!/kanyrunn-open.sh
+!/src/
+!/assets/
+!/ui/
+!/scripts/
+!/release/
+!/docs/
+
+# Rust build output
+/target/
+
+# Local CMake/Qt build output
+/.build/
+/ui/**/build/
+/ui/**/build-*/
+
+# Local caches and agent state
+/.cache/
+/.agents/
+/.claude/
+/.codex/
+
+# External reference or scratch trees
+/refers/
+/Finance/
+
+# Local generated binaries kept out of source commits
+/release/kanyrun
+/release/kanyrun-ui
+/release/*.AppImage
+/release/*.tar.gz
+/release/*.zip
+
+# Editor, OS, temporary, and log files
+*~
+*.bak
+*.tmp
+*.old
+*.orig
+*.rej
+*.swp
+*.swo
+*.log
+.#*
+#*#
+.DS_Store
+Thumbs.db
+
+# Local environment files
+.env
+.env.*
+!*/.env.example

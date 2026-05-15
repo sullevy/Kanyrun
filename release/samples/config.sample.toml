@@ -1,0 +1,68 @@
+# This is a sample config for Kanyrun.
+# Copy it to ~/.config/kanyrun/config.toml before editing your real setup.
+# Change [menus].default_file to switch to another menu.ini, and toggle the default provider below.
+
+[general]
+file_manager = "dolphin"
+default_mode = "smart"
+
+[ui]
+show_icons = true
+
+[menus]
+default_file = "menu.ini"
+default_id = "root"
+fallback_id = "root"
+
+[providers.google]
+label = "Google"
+url = "https://www.google.com/search?q={query}"
+default = true
+
+[providers.github]
+label = "GitHub"
+url = "https://github.com/search?q={query}"
+
+[providers.duckduckgo]
+label = "DuckDuckGo"
+url = "https://duckduckgo.com/?q={query}"
+
+[[rules]]
+when = { kind = "url" }
+behavior = "direct"
+action = "open-url"
+
+[[rules]]
+when = { kind = "file", mime = "application/pdf" }
+behavior = "menu"
+menu = "pdf"
+
+[[rules]]
+when = { kind = "file", mime_glob = "image/*" }
+behavior = "menu"
+menu = "image"
+
+[[rules]]
+when = { kind = "file", mime_glob = "text/*" }
+behavior = "menu"
+menu = "text-file"
+
+[[rules]]
+when = { kind = "directory" }
+behavior = "menu"
+menu = "directory"
+
+[[rules]]
+when = { kind = "file-list" }
+behavior = "menu"
+menu = "file-list"
+
+[[rules]]
+when = { kind = "text" }
+behavior = "menu"
+menu = "text"
+
+[[rules]]
+when = { kind = "file" }
+behavior = "menu"
+menu = "file"

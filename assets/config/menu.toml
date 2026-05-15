@@ -1,0 +1,139 @@
+[[menus]]
+id = "selectedtext"
+title = "Selected text"
+
+[[menus.actions]]
+id = "search"
+label = "Search"
+default = true
+submenu = "search-providers"
+
+[[menus.actions]]
+id = "copy-text"
+label = "Copy text"
+command = { type = "copy-text" }
+
+[[menus]]
+id = "search-providers"
+title = "Search providers"
+
+[[menus.actions]]
+id = "search-default"
+label = "Search: {text_preview}"
+default = true
+command = { type = "search", provider = "duckduckgo" }
+
+[[menus.actions]]
+id = "search-github"
+label = "GitHub search"
+command = { type = "search", provider = "github" }
+
+[[menus]]
+id = "file"
+title = "File"
+
+[[menus.actions]]
+id = "open-file"
+label = "Open"
+default = true
+command = { type = "open-file" }
+
+[[menus.actions]]
+id = "reveal-file"
+label = "Show in folder"
+command = { type = "reveal-file" }
+
+[[menus.actions]]
+id = "copy-file-path"
+label = "Copy path"
+command = { type = "copy-path" }
+
+[[menus]]
+id = "directory"
+title = "Directory"
+
+[[menus.actions]]
+id = "open-directory"
+label = "Open folder"
+default = true
+command = { type = "open-directory" }
+
+[[menus.actions]]
+id = "copy-directory-path"
+label = "Copy path"
+command = { type = "copy-path" }
+
+[[menus]]
+id = "file-list"
+title = "Files"
+
+[[menus.actions]]
+id = "open-parent-directory"
+label = "Open parent folder"
+default = true
+command = { type = "open-directory" }
+
+[[menus.actions]]
+id = "copy-first-path"
+label = "Copy first path"
+command = { type = "copy-path" }
+
+[[menus]]
+id = "pdf"
+title = "PDF"
+
+[[menus.actions]]
+id = "open-pdf"
+label = "Open PDF"
+default = true
+command = { type = "open-file" }
+
+[[menus.actions]]
+id = "reveal-pdf"
+label = "Show in folder"
+command = { type = "reveal-file" }
+
+[[menus.actions]]
+id = "copy-pdf-path"
+label = "Copy path"
+command = { type = "copy-path" }
+
+[[menus]]
+id = "image"
+title = "Image"
+
+[[menus.actions]]
+id = "open-image"
+label = "Open image"
+default = true
+command = { type = "open-file" }
+
+[[menus.actions]]
+id = "reveal-image"
+label = "Show in folder"
+command = { type = "reveal-file" }
+
+[[menus.actions]]
+id = "copy-image-path"
+label = "Copy path"
+command = { type = "copy-path" }
+
+[[menus]]
+id = "text-file"
+title = "Text file"
+
+[[menus.actions]]
+id = "open-text-file"
+label = "Open text file"
+default = true
+command = { type = "open-file" }
+
+[[menus.actions]]
+id = "reveal-text-file"
+label = "Show in folder"
+command = { type = "reveal-file" }
+
+[[menus.actions]]
+id = "copy-text-file-path"
+label = "Copy path"
+command = { type = "copy-path" }

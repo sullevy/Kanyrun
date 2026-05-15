@@ -1,0 +1,60 @@
+[general]
+file_manager = "dolphin"
+default_mode = "smart"
+
+[ui]
+show_icons = true
+
+[menus]
+default_file = "menu.ini"
+default_id = "root"
+fallback_id = "root"
+
+[providers.duckduckgo]
+label = "DuckDuckGo"
+url = "https://duckduckgo.com/?q={query}"
+default = true
+
+[providers.github]
+label = "GitHub"
+url = "https://github.com/search?q={query}"
+
+[[rules]]
+when = { kind = "url" }
+behavior = "direct"
+action = "open-url"
+
+[[rules]]
+when = { kind = "file", mime = "application/pdf" }
+behavior = "menu"
+menu = "pdf"
+
+[[rules]]
+when = { kind = "file", mime_glob = "image/*" }
+behavior = "menu"
+menu = "image"
+
+[[rules]]
+when = { kind = "file", mime_glob = "text/*" }
+behavior = "menu"
+menu = "text-file"
+
+[[rules]]
+when = { kind = "directory" }
+behavior = "menu"
+menu = "directory"
+
+[[rules]]
+when = { kind = "file-list" }
+behavior = "menu"
+menu = "file-list"
+
+[[rules]]
+when = { kind = "text" }
+behavior = "menu"
+menu = "selectedtext"
+
+[[rules]]
+when = { kind = "file" }
+behavior = "menu"
+menu = "file"
