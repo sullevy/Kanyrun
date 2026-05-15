@@ -1,8 +1,8 @@
-# Kanyrun - KDE Plasma 6 / Wayland context launcher
+<h1 align="center">Kanyrun</h1>
 
 <p align="center">
-  <strong>Run context menus at the cursor.</strong><br>
-  A small KDE-only launcher inspired by RunAny, rebuilt around KWin APIs, a resident daemon, and a native Qt menu UI.
+  <strong>KDE Wayland context launcher inspired by RunAny.</strong><br>
+  Open Anyrun-style quick menus for files, text, URLs, and shell actions at the cursor.
 </p>
 
 <p align="center">
@@ -19,14 +19,18 @@
 
 ---
 
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/1fe6bf0e-47ad-4353-988d-1ebeed68a389" controls width="100%"></video>
+</p>
+
 > [!NOTE]
 > Kanyrun is currently designed for KDE Plasma 6 on Wayland. It uses KDE/KWin behavior and APIs, so it is not intended to be a generic GNOME, X11, macOS, or Windows launcher.
 
 ## What is this?
 
-Kanyrun is a lightweight context launcher for KDE Plasma 6 / Wayland. It opens a menu for the current text, URL, file, directory, or selected file list, then runs the configured action: open a PDF, reveal an image in Dolphin, search selected text, copy a path, or launch any shell command.
+Kanyrun is a lightweight KDE Plasma 6 / Wayland context launcher. It opens an Anyrun-style menu for the current text, URL, file, directory, or selected file list, then runs the configured action: open a PDF, reveal an image in Dolphin, search selected text, copy a path, or launch any shell command.
 
-The project is inspired by [RunAny](https://github.com/hui-Zz/RunAny), especially its quick menu and "one configuration, many actions" idea. Kanyrun keeps that style of simple menu configuration, but changes the platform model: instead of Windows and AutoHotkey, it targets KDE Plasma, Wayland, KWin cursor positioning, Qt 6, LayerShellQt, and a Rust daemon.
+The project is inspired by [RunAny](https://github.com/hui-Zz/RunAny), especially its quick launcher, context actions, and "one configuration, many actions" idea. Kanyrun keeps that style of simple menu configuration, but changes the platform model: instead of Windows and AutoHotkey, it targets KDE Plasma, Wayland, KWin cursor positioning, Qt 6, LayerShellQt, and a Rust daemon.
 
 ```mermaid
 flowchart LR
@@ -42,6 +46,7 @@ flowchart LR
 ## Features
 
 - **KDE Wayland first** - places the menu using KWin-aware cursor handling instead of X11 assumptions.
+- **Anyrun-style quick menus** - trigger compact action menus from a keyboard shortcut without opening a full launcher window.
 - **Context menus for files and text** - resolves URLs, plain text, files, directories, file lists, MIME types, and extension-specific menus.
 - **RunAny-style menu files** - keeps a compact `menu.ini` format with submenus, default actions, separators, and shell commands.
 - **Resident daemon** - keeps config, rules, and the warm UI path ready for repeated shortcut use.
@@ -52,7 +57,7 @@ flowchart LR
 
 ## Credits
 
-Kanyrun is inspired by RunAny by hui-Zz. RunAny showed how far a compact quick-launch menu can go when it combines categories, shortcuts, rules, search, and scriptable actions. Kanyrun is not a port of RunAny; it is a KDE Plasma / Wayland implementation with a different runtime and desktop integration model.
+Kanyrun is inspired by RunAny by hui-Zz. RunAny showed how far a compact quick-launch and context-action system can go when it combines categories, shortcuts, rules, search, and scriptable actions. Kanyrun is not a port of RunAny; it is a KDE Plasma / Wayland implementation with a different runtime and desktop integration model.
 
 ## What We Kept
 

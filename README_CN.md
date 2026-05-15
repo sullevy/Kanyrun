@@ -1,8 +1,8 @@
-# Kanyrun - KDE Plasma 6 / Wayland 上下文启动器
+<h1 align="center">Kanyrun</h1>
 
 <p align="center">
-  <strong>在鼠标位置弹出上下文菜单。</strong><br>
-  一个受 RunAny 启发、基于 KWin API、常驻 daemon 和原生 Qt 菜单 UI 的 KDE 专用启动器。
+  <strong>受 RunAny 启发的 KDE Wayland 上下文启动器。</strong><br>
+  在鼠标位置为文件、文本、URL 和 shell 动作弹出 Anyrun 风格 quick menu。
 </p>
 
 <p align="center">
@@ -11,14 +11,18 @@
 
 ---
 
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/1fe6bf0e-47ad-4353-988d-1ebeed68a389" controls width="100%"></video>
+</p>
+
 > [!NOTE]
 > Kanyrun 当前只面向 KDE Plasma 6 / Wayland。它依赖 KDE/KWin 的行为和 API，不是通用的 GNOME、X11、macOS 或 Windows 启动器。
 
 ## 简要介绍
 
-Kanyrun 是一个 KDE Plasma 6 / Wayland 上的轻量上下文启动器。它可以根据当前文本、URL、文件、目录或多文件选择弹出对应菜单，然后执行配置好的动作：打开 PDF、在 Dolphin 中定位图片、搜索选中文本、复制路径，或运行任意 shell 命令。
+Kanyrun 是一个 KDE Plasma 6 / Wayland 上的轻量上下文启动器。它可以根据当前文本、URL、文件、目录或多文件选择弹出 Anyrun 风格菜单，然后执行配置好的动作：打开 PDF、在 Dolphin 中定位图片、搜索选中文本、复制路径，或运行任意 shell 命令。
 
-项目灵感来自 [RunAny](https://github.com/hui-Zz/RunAny)。Kanyrun 继承的是 RunAny 那种“一个菜单配置驱动很多动作”的思路，以及 quick menu 风格的文本配置；但实现方式不是移植，而是重新面向 KDE Plasma / Wayland 设计：核心逻辑使用 Rust，菜单 UI 使用 Qt 6 / LayerShellQt，坐标和桌面集成尽量交给 KWin API。
+项目灵感来自 [RunAny](https://github.com/hui-Zz/RunAny)。Kanyrun 继承的是 RunAny 的快速启动、上下文动作、“一个菜单配置驱动很多动作”的思路，以及 quick menu 风格的文本配置；但实现方式不是移植，而是重新面向 KDE Plasma / Wayland 设计：核心逻辑使用 Rust，菜单 UI 使用 Qt 6 / LayerShellQt，坐标和桌面集成尽量交给 KWin API。
 
 ```mermaid
 flowchart LR
@@ -34,6 +38,7 @@ flowchart LR
 ## 功能特性
 
 - **KDE Wayland 优先** - 使用 KWin 相关能力处理鼠标位置，不把坐标逻辑堆在 shell 脚本里。
+- **Anyrun 风格 quick menu** - 用快捷键触发紧凑动作菜单，而不是打开完整启动器窗口。
 - **文件和文本上下文菜单** - 支持 URL、普通文本、文件、目录、多文件列表、MIME 类型和扩展名菜单。
 - **RunAny 风格菜单文件** - 使用紧凑的 `menu.ini`，支持子菜单、默认项、分隔线和 shell 命令。
 - **常驻 daemon** - 默认通过 daemon 复用配置、规则和 warm UI 路径，减少连续触发时的冷启动开销。
@@ -44,7 +49,7 @@ flowchart LR
 
 ## 致谢
 
-感谢 hui-Zz 的 RunAny。RunAny 展示了分类菜单、快捷启动、规则、搜索和脚本动作组合在一起可以达到很高的效率。Kanyrun 不是 RunAny 的移植版，而是一个 KDE Plasma / Wayland 版本的重新设计。
+感谢 hui-Zz 的 RunAny。RunAny 展示了快速启动、上下文动作、分类菜单、规则、搜索和脚本动作组合在一起可以达到很高的效率。Kanyrun 不是 RunAny 的移植版，而是一个 KDE Plasma / Wayland 版本的重新设计。
 
 ## 保留了什么
 
