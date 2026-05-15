@@ -163,10 +163,15 @@ fn handle_connection(stream: &mut UnixStream, state: &mut DaemonState) -> Result
         state.daemon_idle_timeout = Duration::from_secs(timeout);
     }
     if let Some(timeout) = invocation.request.ui_idle_timeout_secs {
-        state.presenter_idle_timeout = Duration::from_secs(timeout);
-        state.presenter.shutdown();
-        state.presenter = state.build_presenter()?;
-        timing.mark("reset_presenter", format!("timeout={timeout}"));
+        let presenter_idle_timeout = Duration::from_secs(timeout);
+        if presenter_idle_timeout != state.presenter_idle_timeout {
+            state.presenter_idle_timeout = presenter_idle_timeout;
+            state.presenter.shutdown();
+            state.presenter = state.build_presenter()?;
+            timing.mark("reset_presenter", format!("timeout={timeout}"));
+        } else {
+            timing.mark("keep_presenter", format!("timeout={timeout}"));
+        }
     }
 
     let result = state.handle_request(&invocation.request);
