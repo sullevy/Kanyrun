@@ -6,7 +6,12 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub trait MenuPresenter {
@@ -707,6 +712,214 @@ Item {
 }
 "##;
 
+const KWIN_CURSOR_PROVIDER_QML: &str = r##"
+import QtQuick
+import org.kde.kwin
+
+Item {
+    id: root
+
+    property string reqId: "__REQ_ID__"
+    property int callbackPort: __PORT__
+    property int lastX: -2147483648
+    property int lastY: -2147483648
+    property double lastSentAt: 0
+
+    function request(x, y, source) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET",
+            "http://127.0.0.1:" + callbackPort +
+            "/cursor?req=" + encodeURIComponent(reqId) +
+            "&x=" + encodeURIComponent(String(x)) +
+            "&y=" + encodeURIComponent(String(y)) +
+            "&source=" + encodeURIComponent(source || "kwin-provider"));
+        xhr.send();
+    }
+
+    function kwinWorkspace() {
+        if (typeof workspace !== "undefined") {
+            return workspace;
+        }
+        if (typeof Workspace !== "undefined") {
+            return Workspace;
+        }
+        return null;
+    }
+
+    function pointValue(point, name, fallback) {
+        if (!point) return fallback;
+        var value = point[name];
+        if (typeof value === "function") value = value.call(point);
+        value = Number(value);
+        return isFinite(value) ? value : fallback;
+    }
+
+    function nowMs() {
+        return Date.now ? Date.now() : (new Date()).getTime();
+    }
+
+    function publish(force) {
+        var api = kwinWorkspace();
+        if (!api || !api.cursorPos) {
+            return;
+        }
+
+        var pos = api.cursorPos;
+        var x = pointValue(pos, "x", 0);
+        var y = pointValue(pos, "y", 0);
+        var now = nowMs();
+        if (!force && x === lastX && y === lastY && now - lastSentAt < 250) {
+            return;
+        }
+
+        lastX = x;
+        lastY = y;
+        lastSentAt = now;
+        root.request(x, y, "kwin-provider");
+    }
+
+    Component.onCompleted: publish(true)
+
+    Timer {
+        interval: 16
+        repeat: true
+        running: true
+        onTriggered: root.publish(false)
+    }
+}
+"##;
+
+struct CachedCursor {
+    payload: CursorPayload,
+    received_at: Instant,
+}
+
+struct CursorProvider {
+    plugin: String,
+    qml_path: PathBuf,
+    port: u16,
+    latest: Arc<Mutex<Option<CachedCursor>>>,
+    running: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl CursorProvider {
+    fn start() -> Result<Self, String> {
+        let mut timing = crate::timing::Span::new("cursor_provider");
+        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            timing.mark("skip", "reason=not_wayland");
+            return Err("cursor provider requires Wayland".into());
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .map_err(|error| format!("failed to bind cursor provider: {error}"))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| format!("failed to configure cursor provider: {error}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|error| format!("failed to read cursor provider address: {error}"))?
+            .port();
+        let req_id = request_id();
+        let plugin = "kanyrun-cursor-provider".to_string();
+        let qml = KWIN_CURSOR_PROVIDER_QML
+            .replace("__PORT__", &port.to_string())
+            .replace("__REQ_ID__", &req_id);
+        let qml_path = write_kwin_qml(&qml, &format!("cursor-provider-{req_id}"))?;
+        timing.mark("prepare", format!("port={port}"));
+
+        let latest = Arc::new(Mutex::new(None));
+        let running = Arc::new(AtomicBool::new(true));
+        let thread_latest = Arc::clone(&latest);
+        let thread_running = Arc::clone(&running);
+        let thread_req_id = req_id.clone();
+        let thread = thread::spawn(move || {
+            run_cursor_provider(listener, &thread_req_id, thread_latest, thread_running);
+        });
+
+        let _ = unload_kwin_script(&plugin);
+        if let Err(error) = load_kwin_script(&qml_path, &plugin).and_then(|_| start_kwin_scripts())
+        {
+            running.store(false, Ordering::Relaxed);
+            let _ = TcpStream::connect(("127.0.0.1", port));
+            let _ = thread.join();
+            let _ = fs::remove_file(&qml_path);
+            timing.mark("load_failed", "");
+            return Err(error);
+        }
+        timing.mark("script_started", plugin.clone());
+
+        Ok(Self {
+            plugin,
+            qml_path,
+            port,
+            latest,
+            running,
+            thread: Some(thread),
+        })
+    }
+
+    fn latest(&self, max_age: Duration) -> Option<(CursorPayload, Duration)> {
+        let cached = self.latest.lock().ok()?;
+        let cached = cached.as_ref()?;
+        let age = cached.received_at.elapsed();
+        (age <= max_age).then(|| (cached.payload.clone(), age))
+    }
+}
+
+impl Drop for CursorProvider {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        let _ = unload_kwin_script(&self.plugin);
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        let _ = fs::remove_file(&self.qml_path);
+    }
+}
+
+fn run_cursor_provider(
+    listener: TcpListener,
+    req_id: &str,
+    latest: Arc<Mutex<Option<CachedCursor>>>,
+    running: Arc<AtomicBool>,
+) {
+    while running.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                if let Ok(Some(payload)) = read_cursor(&mut stream, req_id)
+                    && let Ok(mut cached) = latest.lock()
+                {
+                    *cached = Some(CachedCursor {
+                        payload,
+                        received_at: Instant::now(),
+                    });
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => {
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+}
+
+fn read_cursor_from_provider_or_kwin(provider: Option<&CursorProvider>) -> Option<CursorPayload> {
+    let mut timing = crate::timing::Span::new("cursor");
+    if let Some(provider) = provider {
+        if let Some((payload, age)) = provider.latest(Duration::from_millis(350)) {
+            timing.mark("provider_hit", format!("age_ms={}", age.as_millis()));
+            return Some(payload);
+        }
+        timing.mark("provider_miss", "");
+    }
+
+    read_cursor_from_kwin()
+}
+
 fn read_cursor_from_kwin() -> Option<CursorPayload> {
     let mut timing = crate::timing::Span::new("cursor");
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
@@ -755,6 +968,7 @@ pub struct WarmPresenter {
     program: PathBuf,
     show_icons: bool,
     idle_timeout: Duration,
+    cursor_provider: Option<CursorProvider>,
     child: Option<WarmUiChild>,
     last_used_at: Option<Instant>,
 }
@@ -777,6 +991,7 @@ impl WarmPresenter {
                     .and_then(|ui| ui.show_icons)
                     .unwrap_or(true),
                 idle_timeout,
+                cursor_provider: CursorProvider::start().ok(),
                 child: None,
                 last_used_at: None,
             }),
@@ -893,7 +1108,7 @@ impl Drop for WarmPresenter {
 impl MenuPresenter for WarmPresenter {
     fn show_menu(&mut self, menu: &MenuModel) -> Result<Option<String>, String> {
         let mut timing = crate::timing::Span::new("presenter");
-        let cursor = read_cursor_from_kwin();
+        let cursor = read_cursor_from_provider_or_kwin(self.cursor_provider.as_ref());
         timing.mark(
             "cursor",
             if cursor.is_some() {
