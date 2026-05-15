@@ -44,6 +44,7 @@
 /release/*.AppImage
 /release/*.tar.gz
 /release/*.zip
+/release/wl-clipboard-rs-master/
 
 # Editor, OS, temporary, and log files
 *~
