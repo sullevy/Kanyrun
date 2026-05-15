@@ -32,17 +32,6 @@ Kanyrun is a lightweight KDE Plasma 6 / Wayland context launcher. It opens an An
 
 The project is inspired by [RunAny](https://github.com/hui-Zz/RunAny), especially its quick launcher, context actions, and "one configuration, many actions" idea. Kanyrun keeps that style of simple menu configuration, but changes the platform model: instead of Windows and AutoHotkey, it targets KDE Plasma, Wayland, KWin cursor positioning, Qt 6, LayerShellQt, and a Rust daemon.
 
-```mermaid
-flowchart LR
-    Shortcut[KDE shortcut] --> Open[kanyrun-open.sh]
-    Direct[kanyrun CLI] --> Daemon[kanyrun daemon]
-    Open --> Daemon
-    Daemon --> Rules[context + rules]
-    Rules --> UI[kanyrun-ui]
-    KWin[KWin cursor API] --> UI
-    UI --> Action[open / search / copy / shell]
-```
-
 ## Features
 
 - **KDE Wayland first** - places the menu using KWin-aware cursor handling instead of X11 assumptions.

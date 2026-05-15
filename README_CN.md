@@ -24,17 +24,6 @@ Kanyrun 是一个 KDE Plasma 6 / Wayland 上的轻量上下文启动器。它可
 
 项目灵感来自 [RunAny](https://github.com/hui-Zz/RunAny)。Kanyrun 继承的是 RunAny 的快速启动、上下文动作、“一个菜单配置驱动很多动作”的思路，以及 quick menu 风格的文本配置；但实现方式不是移植，而是重新面向 KDE Plasma / Wayland 设计：核心逻辑使用 Rust，菜单 UI 使用 Qt 6 / LayerShellQt，坐标和桌面集成尽量交给 KWin API。
 
-```mermaid
-flowchart LR
-    Shortcut[KDE 快捷键] --> Open[kanyrun-open.sh]
-    Direct[kanyrun CLI] --> Daemon[kanyrun daemon]
-    Open --> Daemon
-    Daemon --> Rules[上下文 + 规则]
-    Rules --> UI[kanyrun-ui]
-    KWin[KWin cursor API] --> UI
-    UI --> Action[打开 / 搜索 / 复制 / shell]
-```
-
 ## 功能特性
 
 - **KDE Wayland 优先** - 使用 KWin 相关能力处理鼠标位置，不把坐标逻辑堆在 shell 脚本里。
