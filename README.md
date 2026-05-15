@@ -127,8 +127,8 @@ bash release/install.sh
 
 1. Build and install Kanyrun with `bash scripts/build-release.sh` and `bash release/install.sh`.
 2. Run `kanyrun` to open the default root menu.
-3. Bind a KDE global shortcut to `~/.local/bin/kanyrun` for the default menu.
-4. Bind another shortcut to `~/.local/share/kanyrun/kanyrun-open.sh` for context menus from selected files or current text.
+3. Open **KDE System Settings** -> **Keyboard** -> **Shortcuts** and bind `~/.local/bin/kanyrun` for the default menu.
+4. Add another KDE shortcut for `~/.local/share/kanyrun/kanyrun-open.sh` to open context menus from selected files, directories, or current text.
 5. Edit `~/.config/kanyrun/menu.ini` to add your real commands.
 6. Edit `~/.config/kanyrun/config.toml` to adjust providers, rules, and fallback menus.
 7. Use `kanyrun --help` to inspect CLI flags.

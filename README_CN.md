@@ -119,8 +119,8 @@ bash release/install.sh
 
 1. 执行 `bash scripts/build-release.sh` 和 `bash release/install.sh` 构建并安装。
 2. 运行 `kanyrun` 打开默认 root 菜单。
-3. 在 KDE 全局快捷键中绑定 `~/.local/bin/kanyrun`，用于默认菜单。
-4. 再绑定 `~/.local/share/kanyrun/kanyrun-open.sh`，用于当前文件、目录或文本的上下文菜单。
+3. 打开 **KDE 系统设置** -> **键盘** -> **快捷键**，绑定 `~/.local/bin/kanyrun`，用于默认菜单。
+4. 再添加一个 KDE 快捷键，绑定 `~/.local/share/kanyrun/kanyrun-open.sh`，用于当前文件、目录或文本的上下文菜单。
 5. 编辑 `~/.config/kanyrun/menu.ini`，加入自己的真实命令。
 6. 编辑 `~/.config/kanyrun/config.toml`，调整 provider、规则和 fallback 菜单。
 7. 使用 `kanyrun --help` 查看 CLI 参数。
