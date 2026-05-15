@@ -18,7 +18,7 @@
 !/ui/
 !/scripts/
 !/release/
-!/docs/
+/docs/
 
 # Rust build output
 /target/
